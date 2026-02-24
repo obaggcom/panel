@@ -205,6 +205,11 @@ router.delete('/ai/providers/:id', (req, res) => {
   const provider = db.getAiProviderById(req.params.id);
   if (!provider) return res.status(404).json({ error: '不存在' });
   db.deleteAiProvider(provider.id);
+  // 如果删掉的是当前激活模型，清空激活状态
+  const activeId = db.getSetting('active_ai_provider');
+  if (activeId === String(provider.id)) {
+    db.setSetting('active_ai_provider', '');
+  }
   db.addAuditLog(req.user.id, 'ai_provider_delete', `删除 AI 服务: ${provider.name}`, req.ip);
   res.json({ ok: true });
 });

@@ -92,7 +92,22 @@
     }
 
     async function toggleProvider(id) { await fetch('/admin/api/ai/providers/' + id + '/toggle', { method: 'POST', headers:{'Content-Type':'application/json'} }); location.hash='ai'; location.reload(); }
-    async function deleteProvider(id) { if (!await _confirm('确定删除？')) return; await fetch('/admin/api/ai/providers/' + id, { method: 'DELETE', headers:{'Content-Type':'application/json'} }); location.hash='ai'; location.reload(); }
+    async function deleteProvider(id) {
+      if (!await _confirm('确定删除？')) return;
+      const res = await fetch('/admin/api/ai/providers/' + id, {
+        method: 'DELETE',
+        headers:{'Content-Type':'application/json'},
+        body: '{}'
+      });
+      if (res.ok) {
+        showToast('✅ 已删除模型');
+        location.hash='ai';
+        location.reload();
+      } else {
+        const d = await res.json().catch(()=>({}));
+        showToast('❌ 删除失败：' + (d.error || res.status));
+      }
+    }
 
     function editProvider(id) {
       const el = document.querySelector('[data-provider-id="' + id + '"]');
