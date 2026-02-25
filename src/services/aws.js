@@ -1,5 +1,5 @@
-const { EC2Client, DescribeInstancesCommand, AllocateAddressCommand, AssociateAddressCommand, DisassociateAddressCommand, ReleaseAddressCommand, DescribeAddressesCommand, RunInstancesCommand, TerminateInstancesCommand, StartInstancesCommand, StopInstancesCommand, DescribeInstanceStatusCommand } = require('@aws-sdk/client-ec2');
-const { LightsailClient, GetInstancesCommand, GetStaticIpsCommand, AllocateStaticIpCommand, AttachStaticIpCommand, DetachStaticIpCommand, ReleaseStaticIpCommand } = require('@aws-sdk/client-lightsail');
+const { EC2Client, DescribeInstancesCommand, AllocateAddressCommand, AssociateAddressCommand, DisassociateAddressCommand, ReleaseAddressCommand, DescribeAddressesCommand, RunInstancesCommand, TerminateInstancesCommand, StartInstancesCommand, StopInstancesCommand, DescribeInstanceStatusCommand, DescribeImagesCommand, CreateTagsCommand } = require('@aws-sdk/client-ec2');
+const { LightsailClient, GetInstancesCommand, GetStaticIpsCommand, AllocateStaticIpCommand, AttachStaticIpCommand, DetachStaticIpCommand, ReleaseStaticIpCommand, CreateInstancesCommand, DeleteInstanceCommand, StartInstanceCommand, StopInstanceCommand } = require('@aws-sdk/client-lightsail');
 const { NodeHttpHandler } = require('@smithy/node-http-handler');
 const { SocksProxyAgent } = require('socks-proxy-agent');
 const db = require('./database');
@@ -284,9 +284,195 @@ async function swapNodeIp(node, awsInstanceId, awsType, awsRegion, awsAccountId)
   }
 }
 
+// ========== Lightsail 启停/终止 ==========
+
+async function startLightsailInstance(instanceName, region, accountId) {
+  const ls = getLightsailClient(region, accountId);
+  await ls.send(new StartInstanceCommand({ instanceName }));
+  return true;
+}
+
+async function stopLightsailInstance(instanceName, region, accountId) {
+  const ls = getLightsailClient(region, accountId);
+  await ls.send(new StopInstanceCommand({ instanceName }));
+  return true;
+}
+
+async function terminateLightsailInstance(instanceName, region, accountId) {
+  const ls = getLightsailClient(region, accountId);
+  await ls.send(new DeleteInstanceCommand({ instanceName, forceDeleteAddOns: true }));
+  return true;
+}
+
+// ========== 获取最新 Ubuntu ARM64 AMI ==========
+
+async function getLatestUbuntuAmi(region, accountId) {
+  const ec2 = getEC2Client(region, accountId);
+  const res = await ec2.send(new DescribeImagesCommand({
+    Filters: [
+      { Name: 'name', Values: ['ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-arm64-server-*'] },
+      { Name: 'state', Values: ['available'] },
+      { Name: 'architecture', Values: ['arm64'] }
+    ],
+    Owners: ['099720109477'] // Canonical
+  }));
+  const images = (res.Images || []).sort((a, b) => (b.CreationDate || '').localeCompare(a.CreationDate || ''));
+  if (images.length === 0) throw new Error('未找到 Ubuntu ARM64 AMI');
+  return images[0].ImageId;
+}
+
+// ========== 创建实例 ==========
+
+async function launchEC2Instance(region, instanceType, accountId) {
+  const ec2 = getEC2Client(region, accountId);
+  const amiId = await getLatestUbuntuAmi(region, accountId);
+
+  const res = await ec2.send(new RunInstancesCommand({
+    ImageId: amiId,
+    InstanceType: instanceType || 't4g.micro',
+    MinCount: 1,
+    MaxCount: 1,
+    // 使用默认 VPC 和安全组，需要公网 IP
+    NetworkInterfaces: [{
+      DeviceIndex: 0,
+      AssociatePublicIpAddress: true,
+      Groups: [] // 使用默认安全组
+    }]
+  }));
+
+  const instance = res.Instances?.[0];
+  if (!instance) throw new Error('EC2 创建失败');
+  return { instanceId: instance.InstanceId, state: instance.State?.Name };
+}
+
+async function launchLightsailInstance(region, bundleId, instanceName, accountId) {
+  const ls = getLightsailClient(region, accountId);
+  const az = region + 'a'; // 默认用 a 可用区
+  await ls.send(new CreateInstancesCommand({
+    instanceNames: [instanceName],
+    availabilityZone: az,
+    blueprintId: 'ubuntu_22_04',
+    bundleId: bundleId || 'nano_3_0',
+  }));
+  return { instanceName, state: 'pending' };
+}
+
+// ========== 等待实例就绪 ==========
+
+async function waitForInstanceRunning(instanceId, type, region, accountId, maxWaitMs = 180000) {
+  const start = Date.now();
+  while (Date.now() - start < maxWaitMs) {
+    await new Promise(r => setTimeout(r, 5000));
+    try {
+      if (type === 'lightsail') {
+        const instances = await listLightsailInstances(region, accountId);
+        const inst = instances.find(i => i.instanceName === instanceId);
+        if (inst?.state === 'running') return inst;
+      } else {
+        const instances = await listEC2Instances(region, accountId);
+        const inst = instances.find(i => i.instanceId === instanceId);
+        if (inst?.state === 'running' && inst?.publicIp) return inst;
+      }
+    } catch (e) {
+      console.log(`[等待实例] 查询失败: ${e.message}`);
+    }
+  }
+  throw new Error('等待实例就绪超时');
+}
+
+// ========== 实例标签 ==========
+
+async function tagInstance(instanceId, tags, type, region, accountId) {
+  if (type === 'lightsail') {
+    // Lightsail 不支持 CreateTags，跳过
+    return;
+  }
+  const ec2 = getEC2Client(region, accountId);
+  const ec2Tags = Object.entries(tags).map(([Key, Value]) => ({ Key, Value }));
+  await ec2.send(new CreateTagsCommand({
+    Resources: [instanceId],
+    Tags: ec2Tags
+  }));
+}
+
+// ========== 获取所有账号的所有实例 ==========
+
+async function listAllInstances() {
+  const accounts = db.getAwsAccounts(true); // 只获取启用的
+  const allNodes = db.getAllNodes();
+  // 构建节点映射: accountId:aws_instance_id -> node
+  const nodeMap = {};
+  for (const n of allNodes) {
+    if (n.aws_instance_id && n.aws_account_id) {
+      nodeMap[`${n.aws_account_id}:${n.aws_instance_id}`] = n;
+    }
+  }
+
+  const results = [];
+  // 常用区域列表
+  const REGIONS = ['us-east-1', 'us-west-2', 'ap-northeast-1', 'ap-southeast-1', 'ap-south-1', 'eu-west-1', 'eu-central-1', 'ap-east-1', 'ap-southeast-2', 'ca-central-1', 'sa-east-1'];
+
+  for (const account of accounts) {
+    const accountResult = { accountId: account.id, accountName: account.name, instances: [] };
+    // 每个账号查询所有区域
+    const regionList = [account.default_region || 'us-east-1', ...REGIONS.filter(r => r !== (account.default_region || 'us-east-1'))];
+    const uniqueRegions = [...new Set(regionList)];
+
+    const promises = uniqueRegions.map(async (region) => {
+      const regionInstances = [];
+      try {
+        const ec2List = await listEC2Instances(region, account.id);
+        for (const inst of ec2List) {
+          const node = nodeMap[`${account.id}:${inst.instanceId}`];
+          regionInstances.push({
+            ...inst,
+            instanceType: 'ec2',
+            ec2Type: inst.type,
+            accountId: account.id,
+            accountName: account.name,
+            boundNode: node ? { id: node.id, name: node.name, host: node.host, remark: node.remark, is_active: node.is_active } : null
+          });
+        }
+      } catch (e) { /* 区域无权限等忽略 */ }
+      try {
+        const lsList = await listLightsailInstances(region, account.id);
+        for (const inst of lsList) {
+          const node = nodeMap[`${account.id}:${inst.instanceName}`];
+          regionInstances.push({
+            instanceId: inst.instanceName,
+            name: inst.instanceName,
+            state: inst.state,
+            publicIp: inst.publicIp,
+            region: inst.region || region,
+            instanceType: 'lightsail',
+            bundleId: inst.bundleId,
+            accountId: account.id,
+            accountName: account.name,
+            boundNode: node ? { id: node.id, name: node.name, host: node.host, remark: node.remark, is_active: node.is_active } : null
+          });
+        }
+      } catch (e) { /* 忽略 */ }
+      return regionInstances;
+    });
+
+    const regionResults = await Promise.all(promises);
+    for (const ri of regionResults) {
+      accountResult.instances.push(...ri);
+    }
+    // 过滤掉 terminated 实例
+    accountResult.instances = accountResult.instances.filter(i => i.state !== 'terminated');
+    results.push(accountResult);
+  }
+
+  return results;
+}
+
 module.exports = {
   getAwsConfig, setAwsConfig,
   listEC2Instances, swapEC2Ip, terminateEC2Instance, startEC2Instance, stopEC2Instance,
   listLightsailInstances, swapLightsailIp,
-  swapNodeIp
+  startLightsailInstance, stopLightsailInstance, terminateLightsailInstance,
+  swapNodeIp,
+  getLatestUbuntuAmi, launchEC2Instance, launchLightsailInstance,
+  waitForInstanceRunning, tagInstance, listAllInstances
 };

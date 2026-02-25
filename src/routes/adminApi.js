@@ -4,7 +4,6 @@ const db = require('../services/database');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { randomPort } = require('../utils/vless');
 const deployService = require('../services/deploy');
-const aiService = require('../services/ai');
 
 const router = express.Router();
 router.use(requireAuth, requireAdmin);
@@ -30,6 +29,25 @@ router.post('/whitelist/remove', (req, res) => {
     db.addAuditLog(req.user.id, 'whitelist_remove', `移除白名单: ID#${nodeloc_id}`, req.ip);
     const { syncAllNodesConfig } = require('../services/deploy');
     syncAllNodesConfig(db).catch(() => {});
+  }
+  res.redirect('/admin#whitelist');
+});
+
+// ========== 注册白名单 ==========
+router.post('/register-whitelist/add', (req, res) => {
+  const username = (req.body.username || '').trim();
+  if (username) {
+    db.addToRegisterWhitelist(username);
+    db.addAuditLog(req.user.id, 'reg_whitelist_add', `添加注册白名单: ${username}`, req.ip);
+  }
+  res.redirect('/admin#whitelist');
+});
+
+router.post('/register-whitelist/remove', (req, res) => {
+  const username = (req.body.username || '').trim();
+  if (username) {
+    db.removeFromRegisterWhitelist(username);
+    db.addAuditLog(req.user.id, 'reg_whitelist_remove', `移除注册白名单: ${username}`, req.ip);
   }
   res.redirect('/admin#whitelist');
 });
@@ -71,10 +89,36 @@ router.post('/nodes/deploy', (req, res) => {
 
 router.post('/nodes/:id/delete', (req, res) => {
   const node = db.getNodeById(req.params.id);
-  if (node) {
-    db.deleteNode(req.params.id);
+  if (!node) return res.redirect('/admin#nodes');
+
+  const agentWs = require('../services/agent-ws');
+  const stopCmd = 'systemctl stop xray && systemctl disable xray && systemctl stop vless-agent && systemctl disable vless-agent';
+
+  // 异步停掉远端服务，不阻塞页面跳转
+  (async () => {
+    try {
+      if (agentWs.isAgentOnline(node.id)) {
+        await agentWs.sendCommand(node.id, { type: 'exec', command: stopCmd });
+      } else if (node.ssh_password || node.ssh_key_path) {
+        const { NodeSSH } = require('node-ssh');
+        const ssh = new NodeSSH();
+        const connectOpts = {
+          host: node.ssh_host || node.host, port: node.ssh_port || 22,
+          username: node.ssh_user || 'root', readyTimeout: 10000
+        };
+        if (node.ssh_key_path) connectOpts.privateKeyPath = node.ssh_key_path;
+        else connectOpts.password = node.ssh_password;
+        await ssh.connect(connectOpts);
+        await ssh.execCommand(stopCmd, { execOptions: { timeout: 15000 } });
+        ssh.dispose();
+      }
+    } catch (err) {
+      console.error(`[删除节点] 停止远端服务失败: ${err.message}`);
+    }
+    db.deleteNode(node.id);
     db.addAuditLog(req.user.id, 'node_delete', `删除节点: ${node.name}`, req.ip);
-  }
+  })();
+
   res.redirect('/admin#nodes');
 });
 
@@ -124,17 +168,67 @@ router.post('/users/:id/reset-token', (req, res) => {
   res.redirect('/admin#users');
 });
 
+// 设置单用户流量限额
+router.post('/users/:id/traffic-limit', (req, res) => {
+  const user = db.getUserById(req.params.id);
+  if (!user) return res.status(404).json({ error: '用户不存在' });
+  const limitGB = parseFloat(req.body.limit) || 0;
+  const limitBytes = Math.round(limitGB * 1073741824);
+  db.setUserTrafficLimit(user.id, limitBytes);
+  db.addAuditLog(req.user.id, 'traffic_limit', `设置 ${user.username} 流量限额: ${limitGB > 0 ? limitGB + ' GB' : '无限'}`, req.ip);
+  res.json({ ok: true });
+});
+
+// 设置全局默认流量限额
+router.post('/default-traffic-limit', (req, res) => {
+  const limitGB = parseFloat(req.body.limit) || 0;
+  const limitBytes = Math.round(limitGB * 1073741824);
+  db.setSetting('default_traffic_limit', String(limitBytes));
+  db.addAuditLog(req.user.id, 'default_traffic_limit', `设置默认流量限额: ${limitGB > 0 ? limitGB + ' GB' : '无限'}`, req.ip);
+  res.json({ ok: true });
+});
+
+// 将默认流量限额应用到所有未设置限额的用户（traffic_limit=0）
+router.post('/default-traffic-limit/apply', (req, res) => {
+  const limitBytes = parseInt(db.getSetting('default_traffic_limit')) || 0;
+  const r = db.getDb().prepare('UPDATE users SET traffic_limit = ?').run(limitBytes);
+  db.addAuditLog(req.user.id, 'default_traffic_limit_apply', `批量应用默认流量限额到全部用户: ${r.changes} 个`, req.ip);
+  res.json({ ok: true, updated: r.changes });
+});
+
 // ========== 手动健康检测 ==========
 
+// ========== 手动健康检测（通过 Agent ping） ==========
+
 router.post('/health-check', async (req, res) => {
-  const healthService = require('../services/health');
+  const agentWs = require('../services/agent-ws');
   try {
-    await healthService.checkAllNodes();
-    db.addAuditLog(req.user.id, 'health_check', '手动健康检测', req.ip);
+    const agents = agentWs.getConnectedAgents();
+    const nodes = db.getAllNodes();
+    const onlineNodeIds = new Set(agents.map(a => a.nodeId));
+    const results = [];
+
+    // 向所有在线 agent 发 ping
+    const pings = agents.map(async (a) => {
+      const result = await agentWs.sendCommand(a.nodeId, { type: 'ping' });
+      return { nodeId: a.nodeId, name: a.nodeName, online: result.success, agent: true };
+    });
+    const pingResults = await Promise.all(pings);
+    results.push(...pingResults);
+
+    // 不在线的节点标记离线
+    for (const n of nodes) {
+      if (!onlineNodeIds.has(n.id)) {
+        results.push({ nodeId: n.id, name: n.name, online: false, agent: false });
+      }
+    }
+
+    db.addAuditLog(req.user.id, 'health_check', `Agent 健康检测: ${agents.length}/${nodes.length} 在线`, req.ip);
+    res.json({ ok: true, results });
   } catch (err) {
     console.error('[健康检测]', err);
+    res.status(500).json({ ok: false, error: err.message });
   }
-  res.redirect('/admin#nodes');
 });
 
 // ========== 手动轮换 ==========
@@ -144,286 +238,6 @@ router.post('/rotate', (req, res) => {
   db.addAuditLog(req.user.id, 'manual_rotate', '手动轮换（后台执行中）', req.ip);
   res.redirect('/admin#nodes');
   rotateService.rotateManual().catch(err => console.error('[手动轮换] 失败:', err));
-});
-
-// ========== AI 服务商配置 ==========
-
-router.get('/ai/providers', (req, res) => {
-  const providers = db.getAllAiProviders();
-  // 隐藏 key 中间部分
-  const safe = providers.map(p => ({
-    ...p,
-    api_key_masked: p.api_key.substring(0, 6) + '***' + p.api_key.slice(-4)
-  }));
-  res.json(safe);
-});
-
-router.post('/ai/providers', (req, res) => {
-  const { type, name, endpoint, api_key, model_id, model_name, enabled, priority, system_prompt } = req.body;
-  if (!type || !name || !endpoint || !api_key || !model_id) {
-    return res.status(400).json({ error: '缺少必填字段' });
-  }
-  // 默认端点
-  const defaults = {
-    openai: 'https://api.openai.com/v1',
-    gemini: 'https://generativelanguage.googleapis.com/v1beta',
-    claude: 'https://api.anthropic.com/v1'
-  };
-  const result = db.addAiProvider({
-    type, name,
-    endpoint: endpoint.trim() || defaults[type] || '',
-    api_key: api_key.trim(),
-    model_id: model_id.trim(),
-    model_name: (model_name || '').trim(),
-    enabled: enabled !== false,
-    priority: parseInt(priority) || 0,
-    system_prompt: (system_prompt || '').trim()
-  });
-  db.addAuditLog(req.user.id, 'ai_provider_add', `添加 AI 服务: ${name} (${type})`, req.ip);
-  res.json({ ok: true, id: result.lastInsertRowid });
-});
-
-router.put('/ai/providers/:id', (req, res) => {
-  const provider = db.getAiProviderById(req.params.id);
-  if (!provider) return res.status(404).json({ error: '不存在' });
-
-  const fields = {};
-  const allowed = ['type', 'name', 'endpoint', 'api_key', 'model_id', 'model_name', 'enabled', 'priority', 'system_prompt'];
-  for (const key of allowed) {
-    if (req.body[key] !== undefined) {
-      fields[key] = key === 'enabled' ? (req.body[key] ? 1 : 0) : req.body[key];
-    }
-  }
-  if (Object.keys(fields).length > 0) {
-    db.updateAiProvider(provider.id, fields);
-    db.addAuditLog(req.user.id, 'ai_provider_update', `更新 AI 服务: ${provider.name}`, req.ip);
-  }
-  res.json({ ok: true });
-});
-
-router.delete('/ai/providers/:id', (req, res) => {
-  const provider = db.getAiProviderById(req.params.id);
-  if (!provider) return res.status(404).json({ error: '不存在' });
-  db.deleteAiProvider(provider.id);
-  // 如果删掉的是当前激活模型，清空激活状态
-  const activeId = db.getSetting('active_ai_provider');
-  if (activeId === String(provider.id)) {
-    db.setSetting('active_ai_provider', '');
-  }
-  db.addAuditLog(req.user.id, 'ai_provider_delete', `删除 AI 服务: ${provider.name}`, req.ip);
-  res.json({ ok: true });
-});
-
-router.post('/ai/providers/:id/toggle', (req, res) => {
-  const provider = db.getAiProviderById(req.params.id);
-  if (!provider) return res.status(404).json({ error: '不存在' });
-  db.updateAiProvider(provider.id, { enabled: provider.enabled ? 0 : 1 });
-  // 如果禁用的是当前激活的，清除激活状态
-  const activeId = db.getSetting('active_ai_provider');
-  if (provider.enabled && activeId === String(provider.id)) {
-    db.setSetting('active_ai_provider', '');
-  }
-  db.addAuditLog(req.user.id, 'ai_provider_toggle', `${provider.enabled ? '禁用' : '启用'} AI 服务: ${provider.name}`, req.ip);
-  res.json({ ok: true, enabled: !provider.enabled });
-});
-
-// 设为当前使用的 AI 服务
-router.post('/ai/providers/:id/activate', (req, res) => {
-  const provider = db.getAiProviderById(req.params.id);
-  if (!provider) return res.status(404).json({ error: '不存在' });
-  if (!provider.enabled) return res.status(400).json({ error: '请先启用该服务' });
-  db.setSetting('active_ai_provider', String(provider.id));
-  db.addAuditLog(req.user.id, 'ai_provider_activate', `指定 AI 服务: ${provider.name}`, req.ip);
-  res.json({ ok: true });
-});
-
-// 获取当前激活的 AI 服务
-router.get('/ai/active', (req, res) => {
-  const activeId = db.getSetting('active_ai_provider');
-  res.json({ activeId: activeId ? parseInt(activeId) : null });
-});
-
-// TG 通知配置
-router.post('/notify/config', (req, res) => {
-  const { token, chatId } = req.body;
-  if (token) db.setSetting('tg_bot_token', token);
-  if (chatId !== undefined) db.setSetting('tg_chat_id', chatId || '');
-  res.json({ ok: true });
-});
-
-router.post('/notify/test', async (req, res) => {
-  const { send } = require('../services/notify');
-  try {
-    await send('🔔 测试通知 - 小姨子的诱惑面板通知已配置成功！');
-    res.json({ ok: true });
-  } catch (e) { res.json({ ok: false, error: e.message }); }
-});
-
-router.post('/notify/event', (req, res) => {
-  const { key, enabled } = req.body;
-  if (!key || !key.startsWith('tg_on_')) return res.status(400).json({ error: '无效' });
-  db.setSetting(key, enabled ? 'true' : 'false');
-  res.json({ ok: true });
-});
-
-// 流量排行分页
-router.get('/traffic', (req, res) => {
-  const date = req.query.date || new Date().toISOString().slice(0,10);
-  const page = Math.max(1, parseInt(req.query.page) || 1);
-  const limit = 20;
-  const { rows, total } = db.getAllUsersTraffic(date, limit, (page - 1) * limit);
-  res.json({ rows, total, page, pages: Math.ceil(total / limit), date });
-});
-
-// 日志分页
-router.get('/logs', (req, res) => {
-  const page = Math.max(1, parseInt(req.query.page) || 1);
-  const limit = 50;
-  const { rows, total } = db.getAuditLogs(limit, (page - 1) * limit);
-  res.json({ rows, total, page, pages: Math.ceil(total / limit) });
-});
-
-router.post('/logs/clear', (req, res) => {
-  db.clearAuditLogs();
-  db.addAuditLog(req.user.id, 'logs_clear', '清空审计日志', req.ip);
-  res.json({ ok: true });
-});
-
-// 公告
-router.post('/announcement', (req, res) => {
-  db.setSetting('announcement', (req.body.text || '').trim());
-  db.addAuditLog(req.user.id, 'announcement', '更新公告', req.ip);
-  res.json({ ok: true });
-});
-
-// 注册人数上限
-router.post('/max-users', (req, res) => {
-  const max = Math.max(0, parseInt(req.body.max) || 0);
-  db.setSetting('max_users', String(max));
-  db.addAuditLog(req.user.id, 'max_users', `设置注册上限: ${max === 0 ? '不限制' : max + '人'}`, req.ip);
-  res.json({ ok: true });
-});
-
-// 运维诊断
-router.get('/ops/list', (req, res) => {
-  res.json(db.getAllDiagnoses(30));
-});
-
-router.post('/ops/:id/diagnose', async (req, res) => {
-  const node = db.getNodeById(req.params.id);
-  if (!node) return res.status(404).json({ error: '节点不存在' });
-  if (!node.ssh_password && !node.ssh_key_path) return res.status(400).json({ error: '节点无 SSH 信息' });
-
-  const opsAi = require('../services/ops-ai');
-  const cfg = opsAi.getOpsConfig();
-  if (!cfg) return res.status(400).json({ error: '请先配置运维 AI' });
-
-  db.addAuditLog(req.user.id, 'ops_diagnose', `手动 AI 诊断: ${node.name}`, req.ip);
-
-  // 异步执行多轮诊断
-  const diagResult = db.addDiagnosis(node.id, `⏳ AI 多轮诊断中...`);
-  const diagId = diagResult.lastInsertRowid;
-
-  opsAi.interactiveDiagnose(node, (round, log) => {
-    db.updateDiagnosis(diagId, { diag_info: log, ai_analysis: `⏳ AI 诊断中（第 ${round} 轮）...` });
-  }).then(result => {
-    db.updateDiagnosis(diagId, {
-      status: result.success ? 'fixed' : 'analyzed',
-      diag_info: result.log,
-      ai_analysis: result.analysis,
-      fix_commands: '[]',
-      resolved_at: result.success ? new Date().toISOString() : null
-    });
-    if (result.success) {
-      db.updateNode(node.id, { is_active: 1, remark: '' });
-    }
-    const { notify } = require('../services/notify');
-    notify.ops(`🔧 手动诊断 ${node.name} 完成: ${result.success ? '✅ 已修复' : '⚠️ 未修复'}\n\n${result.analysis}`).catch(() => {});
-  }).catch(e => {
-    console.error('[手动诊断]', e.message);
-    db.updateDiagnosis(diagId, { status: 'no_ai', ai_analysis: `诊断失败: ${e.message}` });
-  });
-
-  res.json({ ok: true, diagId });
-});
-
-router.post('/ops/:id/execute', async (req, res) => {
-  const diag = db.getDiagnosis(req.params.id);
-  if (!diag || diag.status === 'fixed') return res.status(400).json({ error: '无效或已修复' });
-
-  const commands = JSON.parse(diag.fix_commands || '[]');
-  if (commands.length === 0) return res.status(400).json({ error: '无修复命令' });
-
-  const node = db.getNodeById(diag.node_id);
-  if (!node || (!node.ssh_password && !node.ssh_key_path)) return res.status(400).json({ error: '节点无 SSH 信息' });
-
-  const { NodeSSH } = require('node-ssh');
-  const ssh = new NodeSSH();
-  const connectOpts = {
-    host: node.ssh_host || node.host, port: node.ssh_port || 22,
-    username: node.ssh_user || 'root', readyTimeout: 10000
-  };
-  if (node.ssh_key_path) connectOpts.privateKeyPath = node.ssh_key_path;
-  else connectOpts.password = node.ssh_password;
-
-  try {
-    await ssh.connect(connectOpts);
-    const results = [];
-    for (const cmd of commands) {
-      const r = await ssh.execCommand(cmd, { execOptions: { timeout: 30000 } });
-      results.push(`$ ${cmd}\n${r.stdout || r.stderr || '(ok)'}`);
-    }
-    ssh.dispose();
-
-    const fixResult = results.join('\n\n');
-    db.updateDiagnosis(diag.id, { status: 'fixed', fix_result: fixResult, resolved_at: new Date().toISOString() });
-    db.addAuditLog(req.user.id, 'ops_fix', `执行修复: ${node.name} (诊断#${diag.id})`, req.ip);
-
-    const { notify } = require('../services/notify');
-    notify.send(`✅ 节点 ${node.name} 修复命令已执行\n\n${fixResult.substring(0, 500)}`).catch(() => {});
-
-    res.json({ ok: true, result: fixResult });
-  } catch (e) {
-    ssh.dispose();
-    res.status(500).json({ error: 'SSH 执行失败: ' + e.message });
-  }
-});
-
-router.post('/ops/:id/dismiss', (req, res) => {
-  db.updateDiagnosis(req.params.id, { status: 'dismissed', resolved_at: new Date().toISOString() });
-  res.json({ ok: true });
-});
-
-router.post('/ops/clear', (req, res) => {
-  db.clearDiagnoses();
-  res.json({ ok: true });
-});
-
-router.post('/ops/ai-config', (req, res) => {
-  const { type, endpoint, key, model } = req.body;
-  const opsAi = require('../services/ops-ai');
-  const current = opsAi.getOpsConfig();
-  opsAi.setOpsConfig({ type: type || '', endpoint: endpoint || '', key: key || (current?.key) || '', model: model || '' });
-  res.json({ ok: true });
-});
-
-router.get('/ops/ai-config', (req, res) => {
-  const opsAi = require('../services/ops-ai');
-  const cfg = opsAi.getOpsConfig();
-  res.json({ type: cfg?.type || '', endpoint: cfg?.endpoint || '', model: cfg?.model || '', configured: !!cfg });
-});
-
-// 订阅滥用检测
-router.get('/sub-abuse', (req, res) => {
-  const hours = parseInt(req.query.hours) || 24;
-  const minIPs = parseInt(req.query.min) || 3;
-  const abusers = db.getSubAbuseUsers(hours, minIPs);
-  // 补充用户名
-  const result = abusers.map(a => {
-    const user = db.getUserById(a.user_id);
-    return { ...a, username: user?.username || '未知' };
-  });
-  res.json(result);
 });
 
 // ========== AWS 配置 ==========
@@ -580,7 +394,7 @@ router.get('/aws/instances', async (req, res) => {
 });
 
 // 绑定节点到 AWS 实例
-router.post('/nodes/:id/aws-bind', (req, res) => {
+router.post('/nodes/:id/aws-bind', async (req, res) => {
   const { aws_instance_id, aws_type, aws_region, aws_account_id } = req.body;
   const node = db.getNodeById(req.params.id);
   if (!node) return res.status(404).json({ error: '节点不存在' });
@@ -590,6 +404,15 @@ router.post('/nodes/:id/aws-bind', (req, res) => {
     aws_region: aws_region || null,
     aws_account_id: aws_account_id ? parseInt(aws_account_id) : null
   });
+  // 自动打 Name 标签
+  if (aws_instance_id) {
+    try {
+      const aws = require('../services/aws');
+      await aws.tagInstance(aws_instance_id, { Name: node.name }, aws_type || 'ec2', aws_region, aws_account_id ? parseInt(aws_account_id) : undefined);
+    } catch (e) {
+      console.log(`[AWS绑定] 打标签失败: ${e.message}`);
+    }
+  }
   db.addAuditLog(req.user.id, 'aws_bind', `绑定 AWS: ${node.name} → ${aws_instance_id} (${aws_type}) [账号:${aws_account_id || '默认'}]`, req.ip);
   res.json({ ok: true });
 });
@@ -615,20 +438,190 @@ router.post('/nodes/:id/swap-ip', async (req, res) => {
   }
 });
 
-// 终止 EC2 实例
+// 获取所有账号的所有实例（仪表盘用）
+// AWS 实例缓存
+let _awsInstancesCache = { data: null, ts: 0 };
+
+router.get('/aws/all-instances', async (req, res) => {
+  const aws = require('../services/aws');
+  const force = req.query.force === '1';
+  try {
+    // 非强制刷新且缓存有效（10分钟内）则返回缓存
+    if (!force && _awsInstancesCache.data && Date.now() - _awsInstancesCache.ts < 600000) {
+      return res.json(_awsInstancesCache.data);
+    }
+    const results = await aws.listAllInstances();
+    _awsInstancesCache = { data: results, ts: Date.now() };
+    res.json(results);
+  } catch (e) {
+    // 出错时如果有旧缓存也返回
+    if (_awsInstancesCache.data) return res.json(_awsInstancesCache.data);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// EC2/Lightsail 开机
+router.post('/aws/start', async (req, res) => {
+  const { instanceId, region, type, accountId } = req.body;
+  if (!instanceId) return res.status(400).json({ error: '缺少 instanceId' });
+  const aws = require('../services/aws');
+  try {
+    if (type === 'lightsail') {
+      await aws.startLightsailInstance(instanceId, region, accountId ? parseInt(accountId) : undefined);
+    } else {
+      await aws.startEC2Instance(instanceId, region, accountId ? parseInt(accountId) : undefined);
+    }
+    db.addAuditLog(req.user.id, 'aws_start', `开机: ${instanceId} (${type})`, req.ip);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// EC2/Lightsail 关机
+router.post('/aws/stop', async (req, res) => {
+  const { instanceId, region, type, accountId } = req.body;
+  if (!instanceId) return res.status(400).json({ error: '缺少 instanceId' });
+  const aws = require('../services/aws');
+  try {
+    if (type === 'lightsail') {
+      await aws.stopLightsailInstance(instanceId, region, accountId ? parseInt(accountId) : undefined);
+    } else {
+      await aws.stopEC2Instance(instanceId, region, accountId ? parseInt(accountId) : undefined);
+    }
+    db.addAuditLog(req.user.id, 'aws_stop', `关机: ${instanceId} (${type})`, req.ip);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 终止实例（支持 Lightsail）
 router.post('/aws/terminate', async (req, res) => {
   const { instanceId, region, type, accountId } = req.body;
   if (!instanceId) return res.status(400).json({ error: '缺少 instanceId' });
   const aws = require('../services/aws');
   try {
     if (type === 'lightsail') {
-      return res.status(400).json({ error: 'Lightsail 暂不支持通过 API 终止，请到控制台操作' });
+      await aws.terminateLightsailInstance(instanceId, region, accountId ? parseInt(accountId) : undefined);
+    } else {
+      await aws.terminateEC2Instance(instanceId, region, accountId ? parseInt(accountId) : undefined);
     }
-    await aws.terminateEC2Instance(instanceId, region, accountId ? parseInt(accountId) : undefined);
-    db.addAuditLog(req.user.id, 'aws_terminate', `终止实例: ${instanceId}`, req.ip);
+    db.addAuditLog(req.user.id, 'aws_terminate', `终止实例: ${instanceId} (${type})`, req.ip);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+// 实例换 IP（从仪表盘直接操作，非节点维度）
+router.post('/aws/swap-ip', async (req, res) => {
+  const { instanceId, type, region, accountId } = req.body;
+  if (!instanceId) return res.status(400).json({ error: '缺少 instanceId' });
+  const aws = require('../services/aws');
+
+  // 查找绑定的节点
+  const allNodes = db.getAllNodes();
+  const node = allNodes.find(n => n.aws_instance_id === instanceId);
+
+  try {
+    if (node) {
+      // 有绑定节点，走完整换 IP 流程
+      const result = await aws.swapNodeIp(node, instanceId, type, region, accountId ? parseInt(accountId) : undefined);
+      res.json(result);
+    } else {
+      // 没有绑定节点，只换 IP
+      let result;
+      if (type === 'lightsail') {
+        result = await aws.swapLightsailIp(instanceId, region, accountId ? parseInt(accountId) : undefined);
+      } else {
+        result = await aws.swapEC2Ip(instanceId, region, accountId ? parseInt(accountId) : undefined);
+      }
+      db.addAuditLog(req.user.id, 'aws_swap_ip', `换IP: ${instanceId} ${result.oldIp} → ${result.newIp}`, req.ip);
+      res.json({ success: true, newIp: result.newIp, oldIp: result.oldIp });
+    }
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 一键创建并部署实例
+router.post('/aws/launch-and-deploy', async (req, res) => {
+  const { accountId, region, type, spec, sshPassword } = req.body;
+  if (!accountId || !region || !type) return res.status(400).json({ error: '参数不完整' });
+  if (!sshPassword) return res.status(400).json({ error: '请填写 SSH 密码（用于部署）' });
+
+  // 立即返回，后台执行
+  res.json({ ok: true, message: '创建中...' });
+
+  const aws = require('../services/aws');
+  const deployService = require('../services/deploy');
+
+  try {
+    db.addAuditLog(req.user.id, 'aws_launch', `开始创建: ${type} ${spec} in ${region} (账号#${accountId})`, req.ip);
+
+    // 1. 创建实例
+    let instanceId;
+    if (type === 'lightsail') {
+      const name = `panel-${Date.now()}`;
+      await aws.launchLightsailInstance(region, spec, name, parseInt(accountId));
+      instanceId = name;
+    } else {
+      const result = await aws.launchEC2Instance(region, spec, parseInt(accountId));
+      instanceId = result.instanceId;
+    }
+    console.log(`[一键部署] 实例已创建: ${instanceId}`);
+
+    // 2. 等待就绪
+    const inst = await aws.waitForInstanceRunning(instanceId, type, region, parseInt(accountId));
+    const publicIp = inst.publicIp || inst.publicIpAddress;
+    console.log(`[一键部署] 实例就绪: ${instanceId} IP: ${publicIp}`);
+
+    if (!publicIp) throw new Error('实例无公网 IP');
+
+    // 3. 等待 SSH 可用
+    const { checkPort } = require('../services/health');
+    let sshReady = false;
+    for (let i = 0; i < 24; i++) {
+      await new Promise(r => setTimeout(r, 5000));
+      sshReady = await checkPort(publicIp, 22, 5000);
+      if (sshReady) break;
+    }
+    if (!sshReady) throw new Error('SSH 120秒内未就绪');
+
+    // 4. 部署 xray + 添加面板节点
+    await deployService.deployNode({
+      host: publicIp,
+      ssh_password: sshPassword,
+      ssh_port: 22,
+      ssh_user: type === 'lightsail' ? 'ubuntu' : 'ubuntu',
+      triggered_by: req.user.id
+    }, db);
+
+    // 5. 找到刚创建的节点，绑定 AWS 信息
+    const allNodes = db.getAllNodes();
+    const newNode = allNodes.find(n => n.host === publicIp);
+    if (newNode) {
+      db.updateNode(newNode.id, {
+        aws_instance_id: instanceId,
+        aws_type: type,
+        aws_region: region,
+        aws_account_id: parseInt(accountId)
+      });
+      // 6. 打 Name 标签
+      try {
+        await aws.tagInstance(instanceId, { Name: newNode.name }, type, region, parseInt(accountId));
+      } catch (e) {
+        console.log(`[一键部署] 打标签失败: ${e.message}`);
+      }
+    }
+
+    db.addAuditLog(req.user.id, 'aws_launch_done', `一键部署完成: ${instanceId} IP: ${publicIp}`, req.ip);
+    try { const { notify } = require('../services/notify'); notify.ops(`🚀 一键部署完成: ${instanceId} (${publicIp})`).catch(() => {}); } catch {}
+  } catch (e) {
+    console.error(`[一键部署] 失败: ${e.message}`);
+    db.addAuditLog(req.user.id, 'aws_launch_fail', `一键部署失败: ${e.message}`, req.ip);
+    try { const { notify } = require('../services/notify'); notify.ops(`❌ 一键部署失败: ${e.message}`).catch(() => {}); } catch {}
   }
 });
 
@@ -636,6 +629,182 @@ router.post('/aws/terminate', async (req, res) => {
 router.get('/sub-access/:userId', (req, res) => {
   const hours = parseInt(req.query.hours) || 24;
   res.json(db.getSubAccessIPs(parseInt(req.params.userId), hours));
+});
+
+// ========== Agent WebSocket 管理 ==========
+
+router.get('/agents', (req, res) => {
+  const { getConnectedAgents } = require('../services/agent-ws');
+  res.json({ agents: getConnectedAgents() });
+});
+
+router.post('/agents/:nodeId/command', async (req, res) => {
+  const nodeId = parseInt(req.params.nodeId);
+  const command = req.body;
+  if (!command || !command.type) {
+    return res.status(400).json({ error: '缺少 command.type' });
+  }
+  const { sendCommand } = require('../services/agent-ws');
+  const result = await sendCommand(nodeId, command);
+  db.addAuditLog(req.user.id, 'agent_command', `节点#${nodeId} 指令: ${command.type}`, req.ip);
+  res.json(result);
+});
+
+// 重启 Xray
+router.post('/nodes/:id/restart-xray', async (req, res) => {
+  const node = db.getNodeById(req.params.id);
+  if (!node) return res.status(404).json({ error: '节点不存在' });
+  const agentWs = require('../services/agent-ws');
+  if (!agentWs.isAgentOnline(node.id)) {
+    return res.json({ success: false, error: 'Agent 不在线' });
+  }
+  const result = await agentWs.sendCommand(node.id, { type: 'restart_xray' });
+  db.addAuditLog(req.user.id, 'restart_xray', `重启 Xray: ${node.name}`, req.ip);
+  res.json(result);
+});
+
+// 批量更新 Agent
+router.post('/agents/update-all', async (req, res) => {
+  const agentWs = require('../services/agent-ws');
+  const agents = agentWs.getConnectedAgents();
+  if (agents.length === 0) return res.json({ ok: true, results: [], message: '无在线 Agent' });
+
+  const results = await Promise.all(agents.map(async (a) => {
+    const r = await agentWs.sendCommand(a.nodeId, { type: 'self_update' });
+    return { nodeId: a.nodeId, name: a.nodeName, success: r.success, error: r.error };
+  }));
+  db.addAuditLog(req.user.id, 'agent_update_all', `批量更新 Agent: ${agents.length} 个`, req.ip);
+  res.json({ ok: true, results });
+});
+
+router.post('/agent-token/regenerate', (req, res) => {
+  const newToken = uuidv4();
+  db.setSetting('agent_token', newToken);
+  db.addAuditLog(req.user.id, 'agent_token_regen', '重新生成 Agent Token', req.ip);
+  res.json({ token: newToken });
+});
+
+// ========== 日志 API ==========
+
+router.get('/logs', (req, res) => {
+  const page = parseInt(req.query.page) || 1;
+  const type = req.query.type || 'all';
+  const limit = 50;
+  const offset = (page - 1) * limit;
+  const logs = db.getAuditLogs(limit, offset, type);
+  res.json(logs);
+});
+
+router.post('/logs/clear', (req, res) => {
+  db.clearAuditLogs();
+  db.addAuditLog(req.user.id, 'logs_clear', '清空日志', req.ip);
+  res.json({ ok: true });
+});
+
+// ========== 通知 API ==========
+
+router.post('/notify/config', (req, res) => {
+  const { token, chatId } = req.body;
+  if (token) db.setSetting('tg_bot_token', token);
+  if (chatId) db.setSetting('tg_chat_id', chatId);
+  res.json({ ok: true });
+});
+
+router.post('/notify/test', async (req, res) => {
+  try {
+    const { send } = require('../services/notify');
+    await send('🔔 测试通知 - 来自小姨子の后台');
+    res.json({ ok: true });
+  } catch (e) {
+    res.json({ ok: false, error: e.message });
+  }
+});
+
+router.post('/notify/event', (req, res) => {
+  const { key, enabled } = req.body;
+  if (key && key.startsWith('tg_on_')) {
+    db.setSetting(key, enabled ? 'true' : 'false');
+  }
+  res.json({ ok: true });
+});
+
+// ========== 公告 & 限制 ==========
+
+router.post('/announcement', (req, res) => {
+  db.setSetting('announcement', req.body.text || '');
+  res.json({ ok: true });
+});
+
+router.post('/max-users', (req, res) => {
+  db.setSetting('max_users', String(parseInt(req.body.max) || 0));
+  res.json({ ok: true });
+});
+
+// ========== 流量 API ==========
+
+router.get('/traffic', (req, res) => {
+  const page = parseInt(req.query.page) || 1;
+  const range = req.query.range || req.query.date || 'today';
+  const limit = 20;
+  const offset = (page - 1) * limit;
+  const data = db.getUsersTrafficByRange(range, limit, offset);
+  res.json({ ...data, page });
+});
+
+router.get('/traffic/nodes', (req, res) => {
+  const range = req.query.range || 'today';
+  const data = db.getNodesTrafficByRange(range);
+  res.json(data);
+});
+
+// ========== 订阅统计 API ==========
+
+router.get('/sub-stats', (req, res) => {
+  const hours = parseInt(req.query.hours) || 24;
+  const page = parseInt(req.query.page) || 1;
+  const sort = req.query.sort || 'count';
+  const onlyHigh = req.query.high === '1';
+  const limit = 20;
+  const offset = (page - 1) * limit;
+  const data = db.getSubAccessStats(hours, limit, offset, onlyHigh, sort);
+  res.json({ ...data, page, limit });
+});
+
+router.get('/sub-stats/:userId/detail', (req, res) => {
+  const hours = parseInt(req.query.hours) || 24;
+  const data = db.getSubAccessUserDetail(parseInt(req.params.userId), hours);
+  res.json(data);
+});
+
+// ========== AI 运营日记 ==========
+
+router.get('/diary', (req, res) => {
+  const page = parseInt(req.query.page) || 1;
+  const limit = 20;
+  const offset = (page - 1) * limit;
+  const data = db.getDiaryEntries(limit, offset);
+  const stats = db.getDiaryStats();
+  res.json({ ...data, page, stats });
+});
+
+// ========== AI 运维配置 ==========
+
+router.get('/ops-config', (req, res) => {
+  const keys = ['ops_target_nodes', 'ops_patrol_interval', 'ops_max_daily_swaps', 'ops_max_daily_creates',
+    'ops_auto_swap_ip', 'ops_auto_repair', 'ops_auto_scale', 'ops_panel_guard'];
+  const cfg = {};
+  for (const k of keys) cfg[k] = db.getSetting(k) || '';
+  res.json(cfg);
+});
+
+router.post('/ops-config', (req, res) => {
+  const allowed = ['ops_target_nodes', 'ops_patrol_interval', 'ops_max_daily_swaps', 'ops_max_daily_creates',
+    'ops_auto_swap_ip', 'ops_auto_repair', 'ops_auto_scale', 'ops_panel_guard'];
+  for (const [k, v] of Object.entries(req.body)) {
+    if (allowed.includes(k)) db.setSetting(k, String(v));
+  }
+  db.addAuditLog(req.user.id, 'ops_config', '更新 AI 运维配置', req.ip);
+  res.json({ ok: true });
 });
 
 module.exports = router;

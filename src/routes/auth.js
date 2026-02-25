@@ -34,7 +34,11 @@ router.get('/callback', (req, res, next) => {
       if (err) return res.redirect('/auth/login?error=' + encodeURIComponent('登录失败'));
       const loginIP = req.headers['cf-connecting-ip'] || req.headers['x-real-ip'] || req.ip;
       db.addAuditLog(user.id, 'login', `用户 ${user.username} 登录`, loginIP);
-      notify.login(user.username, loginIP);
+      // 如果用户刚被解冻，异步同步节点配置
+      if (user._wasFrozen) {
+        const { syncAllNodesConfig } = require('../services/deploy');
+        syncAllNodesConfig(db).catch(() => {});
+      }
       res.redirect('/');
     });
   })(req, res, next);

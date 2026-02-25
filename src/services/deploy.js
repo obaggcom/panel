@@ -5,7 +5,7 @@ const { BEAUTIFUL_NAMES } = require('../utils/names');
 
 // 地区 emoji 映射
 const REGION_EMOJI = {
-  'singapore': '🇸🇬', 'tokyo': '🇯🇵', 'japan': '🇯🇵', 'osaka': '🇯🇵',
+  'singapore': '🇸🇬', 'tokyo': '🇯🇵', 'japan': '🇯🇵', 'osaka': '🇯🇵', 'chiyoda': '🇯🇵',
   'seoul': '🇰🇷', 'korea': '🇰🇷', 'hong kong': '🇭🇰', 'hongkong': '🇭🇰',
   'taiwan': '🇹🇼', 'mumbai': '🇮🇳', 'india': '🇮🇳',
   'sydney': '🇦🇺', 'australia': '🇦🇺',
@@ -19,7 +19,7 @@ const REGION_EMOJI = {
 };
 
 const CITY_CN = {
-  'singapore': '新加坡', 'tokyo': '东京', 'osaka': '大阪',
+  'singapore': '新加坡', 'tokyo': '东京', 'osaka': '大阪', 'chiyoda': '千代田', 'chiyoda city': '千代田',
   'seoul': '首尔', 'hong kong': '香港', 'hongkong': '香港',
   'taipei': '台北', 'mumbai': '孟买', 'sydney': '悉尼',
   'london': '伦敦', 'frankfurt': '法兰克福', 'paris': '巴黎',
@@ -141,8 +141,24 @@ function buildXrayConfig(port, clients, outbounds, realityOpts) {
 
 // ========== SSH 推送配置 ==========
 
-// 将配置推送到节点并重启 xray
+// 将配置推送到节点并重启 xray（优先通过 Agent，SSH 后备）
 async function pushConfigToNode(node, config) {
+  // 优先通过 Agent 推送
+  const agentWs = require('./agent-ws');
+  if (agentWs.isAgentOnline(node.id)) {
+    try {
+      const result = await agentWs.sendCommand(node.id, {
+        type: 'update_config',
+        config: config,
+      });
+      if (result.success) return true;
+      console.log(`[推送配置] ${node.name} Agent 推送失败: ${result.error}，回退 SSH`);
+    } catch (e) {
+      console.log(`[推送配置] ${node.name} Agent 异常: ${e.message}，回退 SSH`);
+    }
+  }
+
+  // SSH 后备
   const ssh = new NodeSSH();
   try {
     const connectOpts = {
@@ -158,13 +174,12 @@ async function pushConfigToNode(node, config) {
     const configJson = JSON.stringify(config, null, 2);
     const configPath = node.xray_config_path || '/usr/local/etc/xray/config.json';
 
-    // 写入配置并重启
     await ssh.execCommand(`cat > ${configPath} << 'CONFIGEOF'\n${configJson}\nCONFIGEOF`);
     const result = await ssh.execCommand('systemctl restart xray && sleep 1 && systemctl is-active --quiet xray && echo OK || echo FAIL');
 
     return result.stdout.trim() === 'OK';
   } catch (err) {
-    console.error(`[推送配置] ${node.name} 失败: ${err.message}`);
+    console.error(`[推送配置] ${node.name} SSH 失败: ${err.message}`);
     return false;
   } finally {
     ssh.dispose();
@@ -211,6 +226,10 @@ async function syncAllNodesConfig(db) {
     for (const ok of results) { if (ok) success++; else failed++; }
   }
   console.log(`[配置同步] 完成 成功:${success} 失败:${failed}`);
+  if (failed > 0) {
+    const db2 = require('./database');
+    db2.addAuditLog(null, 'config_sync', `配置同步完成 成功:${success} 失败:${failed}`, 'system');
+  }
   return { success, failed };
 }
 
@@ -334,19 +353,98 @@ echo "INSTALL_OK"
       db.updateNode(nodeId, { is_active: 1, remark: sshInfo.socks5_host ? '🏠 家宽落地' : '' });
       db.addAuditLog(sshInfo.triggered_by || null, 'node_deploy', `部署成功: ${name} (${sshInfo.host}:${port}) [${clients.length}用户]`, 'system');
       console.log(`[部署成功] ${name} (${sshInfo.host}:${port}) ${clients.length}个用户`);
+
+      // TG 通知
+      try { const { notify } = require('./notify'); notify.deploy(name, true, `IP: ${sshInfo.host}:${port} | ${clients.length}个用户`); } catch {}
+
+      // 自动安装 Agent
+      try {
+        await installAgentOnNode(ssh, nodeId, db);
+      } catch (agentErr) {
+        console.error(`[Agent安装] ${name} 失败: ${agentErr.message}`);
+      }
     } else {
       const errMsg = (startResult.stderr || startResult.stdout).substring(0, 200);
       db.updateNode(nodeId, { remark: `❌ 部署失败: ${errMsg}` });
       db.addAuditLog(sshInfo.triggered_by || null, 'node_deploy_fail', `部署失败: ${name} - ${errMsg}`, 'system');
       console.error(`[部署失败] ${name}: ${errMsg}`);
+      try { const { notify } = require('./notify'); notify.deploy(name, false, errMsg); } catch {}
     }
   } catch (err) {
     db.updateNode(nodeId, { remark: `❌ ${err.message}` });
     db.addAuditLog(sshInfo.triggered_by || null, 'node_deploy_fail', `部署异常: ${name} - ${err.message}`, 'system');
     console.error(`[部署异常] ${name}: ${err.message}`);
+    try { const { notify } = require('./notify'); notify.deploy(name, false, err.message); } catch {}
   } finally {
     ssh.dispose();
   }
+}
+
+/**
+ * 通过已有 SSH 连接在节点上安装 Agent
+ */
+async function installAgentOnNode(ssh, nodeId, db) {
+  const agentToken = db.getSetting('agent_token');
+  if (!agentToken) {
+    console.log('[Agent安装] 未配置 agent_token，跳过');
+    return;
+  }
+  const serverUrl = process.env.AGENT_WS_URL || 'wss://vip.vip.sd/ws/agent';
+
+  console.log(`[Agent安装] 节点#${nodeId} 开始安装...`);
+
+  // 安装 Node.js（如果没有）
+  const nodeCheck = await ssh.execCommand('command -v node && node -v || echo "NO_NODE"', { execOptions: { timeout: 10000 } });
+  if (nodeCheck.stdout.includes('NO_NODE')) {
+    console.log(`[Agent安装] 节点#${nodeId} 安装 Node.js...`);
+    const installNode = await ssh.execCommand(
+      'curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs',
+      { execOptions: { timeout: 180000 } }
+    );
+    if (installNode.code !== 0 && installNode.code !== null) {
+      throw new Error('Node.js 安装失败: ' + (installNode.stderr || '').substring(0, 200));
+    }
+  }
+
+  // 读取 agent.js 内容并通过 SSH 写入节点
+  const fs = require('fs');
+  const path = require('path');
+  const agentJsPath = path.join(__dirname, '..', '..', 'node-agent', 'agent.js');
+  const agentCode = fs.readFileSync(agentJsPath, 'utf8');
+
+  // 写入 agent.js
+  await ssh.execCommand(`mkdir -p /opt/vless-agent && cat > /opt/vless-agent/agent.js << 'AGENTEOF'\n${agentCode}\nAGENTEOF`);
+  await ssh.execCommand('chmod 755 /opt/vless-agent/agent.js');
+
+  // 写入配置
+  const configJson = JSON.stringify({ server: serverUrl, token: agentToken, nodeId }, null, 2);
+  await ssh.execCommand(`mkdir -p /etc/vless-agent && cat > /etc/vless-agent/config.json << 'CFGEOF'\n${configJson}\nCFGEOF`);
+  await ssh.execCommand('chmod 600 /etc/vless-agent/config.json');
+
+  // 创建 systemd service 并启动
+  const nodeBin = (await ssh.execCommand('which node')).stdout.trim() || '/usr/bin/node';
+  const serviceContent = `[Unit]
+Description=VLESS Panel Node Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=${nodeBin} /opt/vless-agent/agent.js
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=vless-agent
+
+[Install]
+WantedBy=multi-user.target`;
+
+  await ssh.execCommand(`cat > /etc/systemd/system/vless-agent.service << 'SVCEOF'\n${serviceContent}\nSVCEOF`);
+  await ssh.execCommand('systemctl daemon-reload && systemctl enable vless-agent && systemctl restart vless-agent');
+
+  console.log(`[Agent安装] 节点#${nodeId} Agent 安装完成`);
 }
 
 module.exports = { deployNode, detectRegion, generateNodeName, syncNodeConfig, syncAllNodesConfig, pushConfigToNode };

@@ -1,0 +1,133 @@
+<!-- AI 运维 Tab -->
+<div class="tab-panel space-y-4" data-tab="ops">
+  <!-- 说明 -->
+  <div class="glass rounded-2xl p-5">
+    <div class="flex items-center justify-between mb-3">
+      <h3 class="text-white text-sm font-medium">🤖 AI 运维</h3>
+      <span class="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300">由 OpenClaw 直接管理</span>
+    </div>
+    <p class="text-gray-500 text-xs leading-relaxed">
+      AI 运维由本机 OpenClaw 直接操作（读数据库、管进程、SSH 节点），无需 API 中间层。
+      以下配置控制 AI 的自动化行为。
+    </p>
+  </div>
+
+  <!-- 运维配置 -->
+  <div class="glass rounded-2xl p-5">
+    <h3 class="text-white text-sm font-medium mb-4">⚙️ 运维配置</h3>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div>
+        <label class="text-gray-500 text-xs block mb-1">目标节点数（0=不自动扩缩容）</label>
+        <input type="number" id="ops-target-nodes" min="0" class="w-full bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm" value="0">
+      </div>
+      <div>
+        <label class="text-gray-500 text-xs block mb-1">巡检间隔（分钟）</label>
+        <input type="number" id="ops-patrol-interval" min="5" class="w-full bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm" value="30">
+      </div>
+      <div>
+        <label class="text-gray-500 text-xs block mb-1">每日换 IP 上限</label>
+        <input type="number" id="ops-max-daily-swaps" min="0" class="w-full bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm" value="10">
+      </div>
+      <div>
+        <label class="text-gray-500 text-xs block mb-1">每日创建实例上限</label>
+        <input type="number" id="ops-max-daily-creates" min="0" class="w-full bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm" value="3">
+      </div>
+    </div>
+
+    <div class="mt-4 space-y-2">
+      <label class="flex items-center justify-between p-3 rounded-xl bg-black/20 cursor-pointer hover:bg-white/5 transition">
+        <div><span class="text-white text-sm">🔄 被墙自动换 IP</span><span class="text-gray-600 text-xs ml-2">检测到被墙时自动换 IP</span></div>
+        <input type="checkbox" id="ops-auto-swap-ip" class="accent-rose-500">
+      </label>
+      <label class="flex items-center justify-between p-3 rounded-xl bg-black/20 cursor-pointer hover:bg-white/5 transition">
+        <div><span class="text-white text-sm">🔧 节点自动修复</span><span class="text-gray-600 text-xs ml-2">xray 异常时自动重启</span></div>
+        <input type="checkbox" id="ops-auto-repair" class="accent-rose-500">
+      </label>
+      <label class="flex items-center justify-between p-3 rounded-xl bg-black/20 cursor-pointer hover:bg-white/5 transition">
+        <div><span class="text-white text-sm">📈 自动扩缩容</span><span class="text-gray-600 text-xs ml-2">节点不足时自动创建新实例</span></div>
+        <input type="checkbox" id="ops-auto-scale" class="accent-rose-500">
+      </label>
+      <label class="flex items-center justify-between p-3 rounded-xl bg-black/20 cursor-pointer hover:bg-white/5 transition">
+        <div><span class="text-white text-sm">🛡️ 面板守护</span><span class="text-gray-600 text-xs ml-2">面板挂了自动重启</span></div>
+        <input type="checkbox" id="ops-panel-guard" class="accent-rose-500">
+      </label>
+    </div>
+
+    <button onclick="saveOpsConfig()" class="mt-4 w-full bg-rose-600 hover:bg-rose-500 text-white py-2 rounded-xl text-sm transition">保存配置</button>
+  </div>
+
+  <!-- 最近运维日志 -->
+  <div class="glass rounded-2xl p-5">
+    <h3 class="text-white text-sm font-medium mb-3">📋 最近运维日志</h3>
+    <div class="overflow-x-auto max-h-[300px] overflow-y-auto" id="ops-logs-container">
+      <p class="text-gray-600 text-xs text-center py-4">切换到此 Tab 时加载</p>
+    </div>
+  </div>
+</div>
+
+<script>
+// ========== AI 运维配置 ==========
+(function() {
+  // 配置 key 映射
+  const OPS_KEYS = [
+    { id: 'ops-target-nodes', key: 'ops_target_nodes', type: 'int' },
+    { id: 'ops-patrol-interval', key: 'ops_patrol_interval', type: 'int' },
+    { id: 'ops-max-daily-swaps', key: 'ops_max_daily_swaps', type: 'int' },
+    { id: 'ops-max-daily-creates', key: 'ops_max_daily_creates', type: 'int' },
+    { id: 'ops-auto-swap-ip', key: 'ops_auto_swap_ip', type: 'bool' },
+    { id: 'ops-auto-repair', key: 'ops_auto_repair', type: 'bool' },
+    { id: 'ops-auto-scale', key: 'ops_auto_scale', type: 'bool' },
+    { id: 'ops-panel-guard', key: 'ops_panel_guard', type: 'bool' },
+  ];
+
+  window.loadOpsConfig = async function() {
+    try {
+      const res = await fetch('/admin/api/ops-config');
+      const cfg = await res.json();
+      for (const k of OPS_KEYS) {
+        const el = document.getElementById(k.id);
+        if (!el) continue;
+        const val = cfg[k.key];
+        if (k.type === 'bool') el.checked = val === 'true';
+        else if (val) el.value = val;
+      }
+    } catch {}
+
+    // 运维日志
+    const container = document.getElementById('ops-logs-container');
+    try {
+      const res2 = await fetch('/admin/api/logs?page=1&type=system');
+      const d = await res2.json();
+      const opsKeywords = ['ops_', 'swap_ip', 'deploy', 'repair', 'node_', 'aws_', 'rotate', 'health'];
+      const opsLogs = (d.rows || []).filter(l => l.action && opsKeywords.some(kw => l.action.includes(kw)));
+      if (opsLogs.length === 0) {
+        container.innerHTML = '<p class="text-gray-600 text-xs text-center py-4">暂无运维日志</p>';
+      } else {
+        container.innerHTML = '<table class="w-full text-sm text-left"><thead class="text-gray-500 border-b border-white/5 text-xs sticky top-0" style="background:rgba(15,11,30,0.95)"><tr><th class="py-2 px-3">时间</th><th class="py-2 px-3">操作</th><th class="py-2 px-3">详情</th></tr></thead><tbody class="text-gray-300">' +
+          opsLogs.slice(0, 20).map(l => `<tr class="border-b border-white/5"><td class="py-1.5 px-3 text-[11px] text-gray-500">${l.created_at}</td><td class="py-1.5 px-3 text-[11px]">${l.action}</td><td class="py-1.5 px-3 text-[11px] text-gray-500 max-w-xs truncate">${l.detail || ''}</td></tr>`).join('') +
+          '</tbody></table>';
+      }
+    } catch {
+      container.innerHTML = '<p class="text-gray-600 text-xs text-center py-4">暂无运维日志</p>';
+    }
+  };
+
+  window.saveOpsConfig = async function() {
+    const data = {};
+    for (const k of OPS_KEYS) {
+      const el = document.getElementById(k.id);
+      if (!el) continue;
+      data[k.key] = k.type === 'bool' ? String(el.checked) : el.value;
+    }
+    try {
+      const res = await fetch('/admin/api/ops-config', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+      if (res.ok) showToast('✅ 运维配置已保存');
+      else showToast('❌ 保存失败');
+    } catch (e) { showToast('❌ ' + e.message); }
+  };
+})();
+if (location.hash === '#ops') setTimeout(loadOpsConfig, 100);
+</script>

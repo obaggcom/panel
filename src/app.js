@@ -14,7 +14,6 @@ const panelRoutes = require('./routes/panel');
 const adminRoutes = require('./routes/admin');
 const adminApiRoutes = require('./routes/adminApi');
 const rotateService = require('./services/rotate');
-const healthService = require('./services/health');
 const trafficService = require('./services/traffic');
 const { getDb } = require('./services/database');
 
@@ -111,45 +110,45 @@ cron.schedule('0 3 * * *', async () => {
   console.log('[CRON] 开始自动轮换...');
   try {
     await rotateService.rotateAll();
+    console.log('[CRON] 轮换完成');
   } catch (err) {
     console.error('[CRON] 轮换失败:', err);
   }
 }, { timezone: 'Asia/Shanghai' });
 
-// 每天凌晨 4 点清理过期数据
-cron.schedule('0 4 * * *', () => {
+// 每天凌晨 4 点清理过期数据 + 自动冻结不活跃用户
+cron.schedule('0 4 * * *', async () => {
   try {
-    const db = require('./services/database').getDb();
-    const r1 = db.prepare("DELETE FROM ai_chats WHERE created_at < datetime('now', '-30 days')").run();
-    const r2 = db.prepare("DELETE FROM ai_sessions WHERE updated_at < datetime('now', '-30 days')").run();
-    const r3 = db.prepare("DELETE FROM audit_logs WHERE created_at < datetime('now', '-90 days')").run();
+    const db = require('./services/database');
+    const d = db.getDb();
+    const r1 = d.prepare("DELETE FROM ai_chats WHERE created_at < datetime('now', '-30 days')").run();
+    const r2 = d.prepare("DELETE FROM ai_sessions WHERE updated_at < datetime('now', '-30 days')").run();
+    const r3 = d.prepare("DELETE FROM audit_logs WHERE created_at < datetime('now', '-90 days')").run();
     console.log(`[清理] 聊天:${r1.changes} 会话:${r2.changes} 日志:${r3.changes}`);
-  } catch (err) { console.error('[清理] 失败:', err); }
-}, { timezone: 'Asia/Shanghai' });
 
-// 健康检测（每 5 分钟）
-cron.schedule('*/5 * * * *', async () => {
-  try {
-    await healthService.checkAllNodes();
-  } catch (err) {
-    console.error('[健康检测] 失败:', err);
-  }
-}, { timezone: 'Asia/Shanghai' });
-
-// 流量采集（每 10 分钟）
-cron.schedule('*/10 * * * *', async () => {
-  try {
-    await trafficService.collectAllTraffic();
-  } catch (err) {
-    console.error('[流量采集] 失败:', err);
-  }
+    // 自动冻结 15 天未登录的用户
+    const frozen = db.autoFreezeInactiveUsers(15);
+    if (frozen.length > 0) {
+      console.log(`[冻结] 已冻结 ${frozen.length} 个不活跃用户: ${frozen.map(u => u.username).join(', ')}`);
+      db.addAuditLog(null, 'auto_freeze', `自动冻结 ${frozen.length} 个用户: ${frozen.map(u => u.username).join(', ')}`, 'system');
+      // 同步节点配置，移除冻结用户的 UUID
+      const { syncAllNodesConfig } = require('./services/deploy');
+      await syncAllNodesConfig(db);
+    }
+  } catch (err) { console.error('[清理/冻结] 失败:', err); }
 }, { timezone: 'Asia/Shanghai' });
 
 // 启动
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`🚀 VLESS 节点面板已启动: http://localhost:${PORT}`);
   console.log(`📋 环境: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔒 白名单: ${process.env.WHITELIST_ENABLED === 'true' ? '开启' : '关闭'}`);
+  // 记录面板启动
+  const db = require('./services/database');
+  db.addAuditLog(null, 'panel_start', `面板启动 端口:${PORT} 环境:${process.env.NODE_ENV || 'development'}`, 'system');
 });
+
+// 初始化 WebSocket Agent 服务
+require('./services/agent-ws').init(server);
 
 module.exports = app;

@@ -21,11 +21,13 @@
       <button onclick="switchTab('users')" class="tab-btn text-sm px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="users">👥 用户</button>
       <button onclick="switchTab('traffic')" class="tab-btn text-sm px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="traffic">📊 流量</button>
       <button onclick="switchTab('whitelist')" class="tab-btn text-sm px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="whitelist">🔒 白名单</button>
-      <button onclick="switchTab('ai')" class="tab-btn text-sm px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="ai">🧠 AI</button>
       <button onclick="switchTab('logs')" class="tab-btn text-sm px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="logs">📋 日志</button>
-      <button onclick="switchTab('abuse')" class="tab-btn text-sm px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="abuse">🔍 监控</button>
+      <button onclick="switchTab('abuse')" class="tab-btn text-sm px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="abuse">📈 订阅统计</button>
       <button onclick="switchTab('notify')" class="tab-btn text-sm px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="notify">🔔 通知</button>
       <button onclick="switchTab('aws')" class="tab-btn text-sm px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="aws">☁️ AWS</button>
+      <button onclick="switchTab('ops')" class="tab-btn text-sm px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="ops">🧠 AI运维</button>
+      <button onclick="switchTab('diary')" class="tab-btn text-sm px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="diary">📔 运营日记</button>
+      <button onclick="switchTab('docs')" class="tab-btn text-sm px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="docs">📖 使用说明</button>
     </div>
   </div>
 
@@ -33,6 +35,9 @@
     <%- include('partials/admin-nodes') %>
     <%- include('partials/admin-sections') %>
     <%- include('partials/admin-traffic') %>
+    <%- include('partials/admin-ops') %>
+    <%- include('partials/admin-diary') %>
+    <%- include('partials/admin-docs') %>
   </main>
 
   <style>
@@ -46,7 +51,11 @@
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
       document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.dataset.tab === name));
       location.hash = name;
-      if (name === 'aws') loadAwsConfig();
+      if (name === 'aws') { loadAwsConfig(); }
+      if (name === 'ops') { loadOpsConfig(); }
+      if (name === 'diary') { loadDiary(1); }
+      if (name === 'logs') loadLogs(1);
+      if (name === 'abuse') loadSubStats(1);
     }
     if (location.hash.slice(1)) switchTab(location.hash.slice(1));
     const _msg = new URLSearchParams(location.search).get('msg');
@@ -64,74 +73,6 @@
       }).then(r => r.json()).then(d => { if (d.ok) showToast('等级已更新，节点配置同步中'); });
     }
 
-    const defaultEndpoints = { openai: 'https://api.openai.com/v1', gemini: 'https://generativelanguage.googleapis.com/v1beta', claude: 'https://api.anthropic.com/v1' };
-    const defaultModels = { openai: 'gpt-4o', gemini: 'gemini-2.0-flash', claude: 'claude-sonnet-4-20250514' };
-
-    function fillDefaults() {
-      const type = document.getElementById('pf-type').value;
-      document.getElementById('pf-endpoint').placeholder = defaultEndpoints[type] || '';
-      document.getElementById('pf-model-id').placeholder = defaultModels[type] || '';
-      if (!document.getElementById('pf-edit-id').value) {
-        document.getElementById('pf-endpoint').value = defaultEndpoints[type] || '';
-        document.getElementById('pf-model-id').value = defaultModels[type] || '';
-      }
-    }
-
-    async function saveProvider() {
-      const editId = document.getElementById('pf-edit-id').value;
-      const data = { type: document.getElementById('pf-type').value, name: document.getElementById('pf-name').value.trim(), endpoint: document.getElementById('pf-endpoint').value.trim(), api_key: document.getElementById('pf-key').value.trim(), model_id: document.getElementById('pf-model-id').value.trim(), system_prompt: document.getElementById('pf-prompt').value.trim(), enabled: true };
-      if (!data.name || !data.endpoint || !data.model_id || (!editId && !data.api_key)) { _alert('请填写必填字段'); return; }
-      const btn = document.getElementById('pf-save-btn'); btn.disabled = true; btn.textContent = '保存中...';
-      try {
-        const url = editId ? '/admin/api/ai/providers/' + editId : '/admin/api/ai/providers';
-        if (editId && !data.api_key) delete data.api_key;
-        const res = await fetch(url, { method: editId ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
-        if (res.ok) { location.hash='ai'; location.reload(); } else _alert('保存失败: ' + (await res.json()).error);
-      } catch (e) { _alert('请求失败: ' + e.message); }
-      btn.disabled = false; btn.textContent = '保存';
-    }
-
-    async function toggleProvider(id) { await fetch('/admin/api/ai/providers/' + id + '/toggle', { method: 'POST', headers:{'Content-Type':'application/json'} }); location.hash='ai'; location.reload(); }
-    async function deleteProvider(id) {
-      if (!await _confirm('确定删除？')) return;
-      const res = await fetch('/admin/api/ai/providers/' + id, {
-        method: 'DELETE',
-        headers:{'Content-Type':'application/json'},
-        body: '{}'
-      });
-      if (res.ok) {
-        showToast('✅ 已删除模型');
-        location.hash='ai';
-        location.reload();
-      } else {
-        const d = await res.json().catch(()=>({}));
-        showToast('❌ 删除失败：' + (d.error || res.status));
-      }
-    }
-
-    function editProvider(id) {
-      const el = document.querySelector('[data-provider-id="' + id + '"]');
-      if (!el) return;
-      const texts = el.querySelectorAll('p');
-      const nameTxt = texts[0]?.textContent?.trim() || '';
-      const metaTxt = texts[1]?.textContent || '';
-      const endpointTxt = texts[2]?.textContent?.trim() || '';
-      const typeMatch = metaTxt.match(/^\s*(OPENAI|GEMINI|CLAUDE)/);
-      const type = typeMatch ? typeMatch[1].toLowerCase() : 'openai';
-      const modelMatch = metaTxt.match(/·\s*(.+)$/);
-      const modelId = modelMatch ? modelMatch[1].trim() : '';
-      document.getElementById('pf-edit-id').value = id;
-      document.getElementById('pf-type').value = type;
-      document.getElementById('pf-name').value = nameTxt;
-      document.getElementById('pf-endpoint').value = endpointTxt;
-      document.getElementById('pf-key').value = '';
-      document.getElementById('pf-key').placeholder = '留空保留原 Key';
-      document.getElementById('pf-model-id').value = modelId;
-      document.getElementById('pf-prompt').value = el.dataset.prompt || '';
-      document.getElementById('pf-save-btn').textContent = '更新';
-      document.getElementById('add-provider-details').open = true;
-      document.getElementById('provider-form-container').scrollIntoView({ behavior: 'smooth' });
-    }
 
     async function saveAnnouncement() {
       const text = document.getElementById('announcement-text').value.trim();
@@ -156,22 +97,22 @@
       const bindSel = document.getElementById('bind-account-id');
 
       if (cfg.configured) {
-        el.textContent = `✅ 已配置 ${cfg.count} 个账号`;
-        el.className = 'text-xs px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300';
+        el.textContent = `✅ ${cfg.count} 个账号`;
+        el.className = 'text-xs px-2 py-0.5 rounded-full bg-white/10 text-gray-300';
       } else {
         el.textContent = '未配置';
         el.className = 'text-xs px-2 py-0.5 rounded-full bg-gray-500/20 text-gray-400';
       }
 
       list.innerHTML = (cfg.accounts || []).map(a =>
-        `<div class="flex items-center justify-between rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2.5">
+        `<div class="flex items-center justify-between rounded-xl bg-black/20 border border-white/5 px-3 py-2.5">
           <div class="min-w-0">
-            <div class="text-xs text-emerald-300 font-medium truncate">#${a.id} ${a.name}</div>
-            <div class="text-[11px] text-gray-300 mt-0.5 truncate">${a.accessKeyMasked}${a.socks5_host ? ' · SOCKS ' + a.socks5_host + ':' + a.socks5_port : ''}</div>
+            <div class="text-xs text-white font-medium truncate">#${a.id} ${a.name}</div>
+            <div class="text-[11px] text-gray-500 mt-0.5 truncate">${a.accessKeyMasked}${a.socks5_host ? ' · SOCKS ' + a.socks5_host + ':' + a.socks5_port : ''}</div>
           </div>
           <div class="flex items-center gap-2">
-            <button type="button" class="text-amber-200 hover:text-amber-100 text-xs px-2 py-1 rounded-lg bg-amber-500/10 border border-amber-500/20" onclick="editAwsAccount(${a.id})">编辑</button>
-            <button type="button" class="text-red-300 hover:text-red-200 text-xs px-2 py-1 rounded-lg bg-red-500/10 border border-red-500/20" onclick="deleteAwsAccount(${a.id})">删除</button>
+            <button type="button" class="text-gray-300 hover:text-white text-xs px-2 py-1 rounded-lg bg-white/5 border border-white/10" onclick="editAwsAccount(${a.id})">编辑</button>
+            <button type="button" class="text-red-400 hover:text-red-300 text-xs px-2 py-1 rounded-lg bg-red-500/10 border border-red-500/20" onclick="deleteAwsAccount(${a.id})">删除</button>
           </div>
         </div>`
       ).join('') || '<p class="text-gray-500 text-xs">暂无 AWS 账号</p>';
@@ -282,7 +223,7 @@
         aws_account_id: parseInt(document.getElementById('bind-account-id').value),
         aws_instance_id: document.getElementById('bind-instance-id').value.trim(),
         aws_type: document.getElementById('bind-type').value,
-        aws_region: document.getElementById('bind-region').value.trim() || null
+        aws_region: document.getElementById('bind-region').value || null
       };
       if (!data.aws_account_id) { showToast('请选择 AWS 账号'); return; }
       if (!data.aws_instance_id) { showToast('请填写实例 ID'); return; }
@@ -304,7 +245,174 @@
       else showToast('❌ ' + (data.error || '换 IP 失败'));
     }
     // 初始化 AWS 配置状态
-    if (location.hash === '#aws') setTimeout(loadAwsConfig, 100);
+    if (location.hash === '#aws') setTimeout(() => { loadAwsConfig(); }, 100);
+    if (location.hash === '#logs') setTimeout(() => loadLogs(1), 100);
+
+    // ========== 实例仪表盘 ==========
+    async function loadAllInstances(force = false) {
+      const loading = document.getElementById('aws-instances-loading');
+      const container = document.getElementById('aws-instances-container');
+      loading.classList.remove('hidden');
+      container.classList.add('hidden');
+
+      try {
+        const res = await fetch('/admin/api/aws/all-instances' + (force ? '?force=1' : ''));
+        const accounts = await res.json();
+        if (!res.ok) throw new Error(accounts.error || '加载失败');
+
+        let html = '';
+        for (const acc of accounts) {
+          if (acc.instances.length === 0) continue;
+          html += `<div class="mb-3"><div class="text-xs text-gray-400 mb-2 font-medium">📦 ${acc.accountName} (#${acc.accountId})</div><div class="space-y-1.5">`;
+          for (const inst of acc.instances) {
+            const isBlocked = inst.boundNode && (inst.boundNode.remark?.includes('被墙') || inst.boundNode.remark?.includes('离线') || !inst.boundNode.is_active);
+            const stateColor = inst.state === 'running' ? 'text-emerald-400' : inst.state === 'stopped' ? 'text-gray-500' : 'text-yellow-400';
+            const stateDot = inst.state === 'running' ? 'bg-emerald-400' : inst.state === 'stopped' ? 'bg-gray-500' : 'bg-yellow-400';
+            const rowBg = isBlocked ? 'bg-red-500/10 border border-red-500/20' : 'bg-black/20';
+
+            html += `<div class="p-2.5 rounded-xl ${rowBg} space-y-2">
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="inline-block w-2 h-2 rounded-full ${stateDot} flex-shrink-0"></span>
+                <span class="text-xs text-white font-medium">${inst.name || inst.instanceId}</span>
+                <span class="text-[10px] ${stateColor}">${inst.state}</span>
+                <span class="text-[10px] text-gray-600">${inst.region}</span>
+                <span class="text-[10px] px-1 py-0.5 rounded ${inst.instanceType === 'lightsail' ? 'bg-purple-500/20 text-purple-300' : 'bg-sky-500/20 text-sky-300'}">${inst.instanceType}</span>
+              </div>
+              <div class="flex items-center gap-2 flex-wrap text-[10px]">
+                ${inst.publicIp ? `<span class="text-blue-300 font-mono">${inst.publicIp}</span>` : ''}
+                ${inst.boundNode ? `<span class="px-1 py-0.5 rounded bg-emerald-500/20 text-emerald-300">🔗 ${inst.boundNode.name}</span>` : ''}
+                ${isBlocked ? '<span class="px-1 py-0.5 rounded bg-red-500/30 text-red-300">⚠️ 异常</span>' : ''}
+              </div>
+              <div class="flex items-center gap-1 flex-wrap">
+                ${inst.state === 'stopped' ? `<button onclick="awsInstanceAction('start','${inst.instanceId}','${inst.instanceType}','${inst.region}',${inst.accountId})" class="text-[10px] px-2 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30">▶ 开机</button>` : ''}
+                ${inst.state === 'running' ? `<button onclick="awsInstanceAction('stop','${inst.instanceId}','${inst.instanceType}','${inst.region}',${inst.accountId})" class="text-[10px] px-2 py-1 rounded-lg bg-gray-500/20 text-gray-300 hover:bg-gray-500/30">⏹ 关机</button>` : ''}
+                ${inst.state === 'running' ? `<button onclick="awsInstanceAction('swap-ip','${inst.instanceId}','${inst.instanceType}','${inst.region}',${inst.accountId})" class="text-[10px] px-2 py-1 rounded-lg ${isBlocked ? 'bg-red-500/30 text-red-200 hover:bg-red-500/40 font-medium' : 'bg-amber-500/20 text-amber-300 hover:bg-amber-500/30'}">🔄 换IP</button>` : ''}
+                <button onclick="awsInstanceAction('terminate','${inst.instanceId}','${inst.instanceType}','${inst.region}',${inst.accountId})" class="text-[10px] px-2 py-1 rounded-lg bg-red-500/20 text-red-300 hover:bg-red-500/30">🗑 终止</button>
+              </div>
+            </div>`;
+          }
+          html += '</div></div>';
+        }
+
+        if (!html) html = '<p class="text-gray-500 text-xs text-center py-4">暂无实例</p>';
+        container.innerHTML = html;
+        loading.classList.add('hidden');
+        container.classList.remove('hidden');
+      } catch (e) {
+        loading.textContent = '❌ ' + e.message;
+      }
+    }
+
+    async function awsInstanceAction(action, instanceId, type, region, accountId) {
+      const actionNames = { start: '开机', stop: '关机', terminate: '终止', 'swap-ip': '换 IP' };
+      if (action === 'terminate') {
+        if (!await _confirm(`确定终止实例 ${instanceId}？此操作不可恢复！`)) return;
+      } else if (action === 'swap-ip') {
+        if (!await _confirm(`确定给 ${instanceId} 换 IP？`)) return;
+      }
+      showToast(`⏳ ${actionNames[action]}中...`);
+      try {
+        const res = await fetch('/admin/api/aws/' + action, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ instanceId, type, region, accountId })
+        });
+        const data = await res.json();
+        if (res.ok && (data.ok || data.success)) {
+          showToast(`✅ ${actionNames[action]}成功` + (data.newIp ? ` 新IP: ${data.newIp}` : ''));
+          setTimeout(() => loadAllInstances(true), 2000);
+        } else {
+          showToast(`❌ ${data.error || '操作失败'}`);
+        }
+      } catch (e) {
+        showToast('❌ 网络错误');
+      }
+    }
+
+    // ========== 新建实例 ==========
+    function showLaunchModal() {
+      if (!window._awsAccounts || window._awsAccounts.length === 0) { showToast('请先新增 AWS 账号'); return; }
+      const sel = document.getElementById('launch-account-id');
+      sel.innerHTML = window._awsAccounts.map(a => `<option value="${a.id}">#${a.id} ${a.name}</option>`).join('');
+      updateLaunchSpecs();
+      document.getElementById('aws-launch-modal').classList.remove('hidden');
+    }
+
+    function updateLaunchSpecs() {
+      const type = document.getElementById('launch-type').value;
+      const sel = document.getElementById('launch-spec');
+      if (type === 'lightsail') {
+        sel.innerHTML = '<option value="nano_3_0">nano (512MB/$3.5)</option><option value="micro_3_0">micro (1GB/$5)</option><option value="small_3_0">small (2GB/$10)</option><option value="medium_3_0">medium (4GB/$20)</option>';
+      } else {
+        sel.innerHTML = '<option value="t4g.micro">t4g.micro (1C/1G)</option><option value="t4g.small">t4g.small (2C/2G)</option><option value="t4g.medium">t4g.medium (2C/4G)</option>';
+      }
+    }
+
+    async function confirmLaunch() {
+      const accountId = document.getElementById('launch-account-id').value;
+      const region = document.getElementById('launch-region').value;
+      const type = document.getElementById('launch-type').value;
+      const spec = document.getElementById('launch-spec').value;
+      const sshPassword = document.getElementById('launch-ssh-password').value;
+      if (!sshPassword) { showToast('请填写 SSH 密码'); return; }
+
+      const btn = document.getElementById('launch-btn');
+      btn.disabled = true; btn.textContent = '⏳ 创建中...';
+
+      try {
+        const res = await fetch('/admin/api/aws/launch-and-deploy', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accountId: parseInt(accountId), region, type, spec, sshPassword })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showToast('🚀 正在后台创建并部署，请稍后刷新查看');
+          document.getElementById('aws-launch-modal').classList.add('hidden');
+        } else {
+          showToast('❌ ' + (data.error || '创建失败'));
+        }
+      } catch (e) {
+        showToast('❌ 网络错误');
+      }
+      btn.disabled = false; btn.textContent = '🚀 创建并部署';
+    }
+
+    async function setTrafficLimit(userId, username, currentLimit) {
+      const currentTB = currentLimit ? (currentLimit / 1099511627776).toFixed(2) : '0';
+      const input = await _prompt(`设置 ${username} 的流量限额`, { value: currentTB, placeholder: '0 = 无限', hint: '单位：TB，0 = 无限' });
+      if (input === null) return;
+      const limitTB = parseFloat(input) || 0;
+      const limitGB = limitTB * 1024;
+      const res = await fetch('/admin/api/users/' + userId + '/traffic-limit', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ limit: limitGB })
+      });
+      if (res.ok) { showToast(limitTB > 0 ? `✅ 已设为 ${limitTB} TB` : '✅ 已设为无限'); setTimeout(() => location.reload(), 500); }
+      else showToast('❌ 设置失败');
+    }
+
+    async function saveDefaultTrafficLimit() {
+      const limitTB = parseFloat(document.getElementById('default-traffic-limit').value) || 0;
+      const limitGB = limitTB * 1024;
+      const res = await fetch('/admin/api/default-traffic-limit', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ limit: limitGB })
+      });
+      if (res.ok) showToast(limitTB > 0 ? `✅ 默认限额已设为 ${limitTB} TB` : '✅ 已设为无限');
+      else showToast('❌ 保存失败');
+    }
+
+    async function applyDefaultTrafficLimit() {
+      if (!await _confirm('将当前默认流量限额覆盖应用到全部用户（包括已手动设置过的）？')) return;
+      const res = await fetch('/admin/api/default-traffic-limit/apply', { method: 'POST', headers: {'Content-Type':'application/json'} });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok && d.ok) {
+        showToast(`✅ 已覆盖应用到 ${d.updated || 0} 个用户`);
+        setTimeout(() => location.reload(), 600);
+      } else {
+        showToast('❌ 应用失败');
+      }
+    }
+
     async function saveTG() {
       const token = document.getElementById('tg-token').value.trim();
       const chatId = document.getElementById('tg-chat-id').value.trim();
@@ -320,24 +428,78 @@
       await fetch('/admin/api/notify/event', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: el.dataset.key, enabled: el.checked }) });
     }
 
+    let currentRange = 'today';
     function fmtBytes(b) { if(!b)return'0 B'; const u=['B','KB','MB','GB','TB']; const i=Math.floor(Math.log(b)/Math.log(1024)); return (b/Math.pow(1024,i)).toFixed(1)+' '+u[i]; }
+
+    function switchRange(range) {
+      currentRange = range;
+      document.querySelectorAll('#traffic-range-btns button').forEach(btn => {
+        btn.className = btn.dataset.range === range
+          ? 'text-[11px] px-2.5 py-1 rounded-lg transition bg-rose-600 text-white'
+          : 'text-[11px] px-2.5 py-1 rounded-lg transition glass text-gray-400 hover:text-white';
+      });
+      if (range === 'date') {
+        document.querySelectorAll('#traffic-range-btns button').forEach(btn => {
+          btn.className = 'text-[11px] px-2.5 py-1 rounded-lg transition glass text-gray-400 hover:text-white';
+        });
+      }
+      loadTraffic(1);
+    }
+
     async function loadTraffic(page) {
-      const date = document.getElementById('traffic-date').value;
-      const res = await fetch('/admin/api/traffic?date=' + date + '&page=' + page);
+      let url;
+      if (currentRange === 'date') {
+        const date = document.getElementById('traffic-date').value;
+        url = '/admin/api/traffic?date=' + date + '&page=' + page;
+      } else {
+        url = '/admin/api/traffic?range=' + currentRange + '&page=' + page;
+      }
+      const res = await fetch(url);
       const d = await res.json();
       const body = document.getElementById('traffic-body');
-      if (d.rows.length === 0) { body.innerHTML = '<tr><td colspan="4" class="py-6 px-4 text-gray-600 text-xs text-center">该日暂无流量数据</td></tr>'; }
-      else { body.innerHTML = d.rows.map(u => `<tr class="border-b border-white/5"><td class="py-2 px-4 text-xs">${u.username}</td><td class="py-2 px-4 text-xs">${fmtBytes(u.total_up)}</td><td class="py-2 px-4 text-xs">${fmtBytes(u.total_down)}</td><td class="py-2 px-4 text-xs font-medium text-white">${fmtBytes(u.total_up+u.total_down)}</td></tr>`).join(''); }
+      const offset = (d.page - 1) * 20;
+      if (d.rows.length === 0) {
+        body.innerHTML = '<tr><td colspan="5" class="py-6 px-4 text-gray-600 text-xs text-center">该时段暂无流量数据</td></tr>';
+      } else {
+        body.innerHTML = d.rows.map((u, i) => `<tr class="border-b border-white/5 hover:bg-white/[0.02]"><td class="py-2 px-4 text-[11px] text-gray-500">${offset+i+1}</td><td class="py-2 px-4 text-xs text-white">${u.username}</td><td class="py-2 px-4 text-xs">${fmtBytes(u.total_up)}</td><td class="py-2 px-4 text-xs">${fmtBytes(u.total_down)}</td><td class="py-2 px-4 text-xs font-medium text-rose-400">${fmtBytes(u.total_up+u.total_down)}</td></tr>`).join('');
+      }
       document.getElementById('traffic-info').textContent = `共 ${d.total} 人`;
       const pager = document.getElementById('traffic-pager'); pager.innerHTML = '';
       for (let i=1;i<=d.pages;i++) { const btn=document.createElement('button'); btn.textContent=i; btn.className='text-xs px-2 py-1 rounded '+(i===d.page?'bg-rose-600 text-white':'glass text-gray-400 hover:text-white'); btn.onclick=()=>loadTraffic(i); pager.appendChild(btn); }
+      loadNodeTraffic();
+    }
+
+    async function loadNodeTraffic() {
+      const rangeParam = currentRange === 'date' ? 'today' : currentRange;
+      const res = await fetch('/admin/api/traffic/nodes?range=' + rangeParam);
+      const d = await res.json();
+      const body = document.getElementById('node-traffic-body');
+      if (d.rows.length === 0) {
+        body.innerHTML = '<tr><td colspan="5" class="py-6 px-4 text-gray-600 text-xs text-center">暂无节点流量数据</td></tr>';
+      } else {
+        body.innerHTML = d.rows.map((n, i) => `<tr class="border-b border-white/5 hover:bg-white/[0.02]"><td class="py-2 px-4 text-[11px] text-gray-500">${i+1}</td><td class="py-2 px-4 text-xs text-white">${n.name}</td><td class="py-2 px-4 text-xs">${fmtBytes(n.total_up)}</td><td class="py-2 px-4 text-xs">${fmtBytes(n.total_down)}</td><td class="py-2 px-4 text-xs font-medium text-rose-400">${fmtBytes(n.total_up+n.total_down)}</td></tr>`).join('');
+      }
+    }
+
+    // 初始加载节点流量
+    document.addEventListener('DOMContentLoaded', () => loadNodeTraffic());
+
+    let currentLogType = 'system';
+    function switchLogType(type) {
+      currentLogType = type;
+      document.querySelectorAll('[data-logtype]').forEach(btn => {
+        btn.className = btn.dataset.logtype === type
+          ? 'text-xs px-3 py-1.5 rounded-lg transition bg-rose-600 text-white'
+          : 'text-xs px-3 py-1.5 rounded-lg transition glass text-gray-400 hover:text-white';
+      });
+      loadLogs(1);
     }
 
     async function loadLogs(page) {
-      const res = await fetch('/admin/api/logs?page=' + page);
+      const res = await fetch('/admin/api/logs?page=' + page + '&type=' + currentLogType);
       const d = await res.json();
       document.getElementById('log-body').innerHTML = d.rows.map(l =>
-        `<tr class="border-b border-white/5"><td class="py-2 px-4 text-xs text-gray-500">${l.created_at}</td><td class="py-2 px-4 text-xs">${l.username||'-'}</td><td class="py-2 px-4 text-xs">${l.action}</td><td class="py-2 px-4 text-xs text-gray-500 max-w-xs truncate">${l.detail||''}</td></tr>`
+        `<tr class="border-b border-white/5"><td class="py-2 px-4 text-xs text-gray-500">${l.created_at}</td><td class="py-2 px-4 text-xs">${l.ip === 'system' ? '<span class="text-amber-400">系统</span>' : (l.username||'-')}</td><td class="py-2 px-4 text-xs">${l.action}</td><td class="py-2 px-4 text-xs text-gray-500 max-w-xs truncate">${l.detail||''}</td></tr>`
       ).join('');
       document.getElementById('log-info').textContent = `共 ${d.total} 条`;
       const pager = document.getElementById('log-pager');
@@ -356,30 +518,81 @@
       loadLogs(1);
     }
 
-    async function checkAbuse() {
-      const hours = document.getElementById('abuse-hours').value;
-      const min = hours === '24' ? 20 : 100;
-      const container = document.getElementById('abuse-result');
-      container.innerHTML = '<p class="text-gray-500 text-sm text-center py-2">检测中...</p>';
+    async function loadSubStats(page = 1) {
+      const hours = document.getElementById('substats-hours').value;
+      const sort = document.getElementById('substats-sort').value;
+      const high = document.getElementById('substats-high').checked ? '1' : '0';
+      const container = document.getElementById('substats-result');
+      const pager = document.getElementById('substats-pager');
+      container.innerHTML = '<p class="text-gray-500 text-sm text-center py-2">加载中...</p>';
+      pager.innerHTML = '';
       try {
-        const res = await fetch('/admin/api/sub-abuse?hours=' + hours + '&min=' + min);
-        const data = await res.json();
-        if (data.length === 0) {
-          container.innerHTML = '<p class="text-emerald-400 text-sm text-center py-4">✅ 未发现异常，所有用户订阅拉取正常</p>';
+        const res = await fetch('/admin/api/sub-stats?hours=' + hours + '&page=' + page + '&sort=' + sort + '&high=' + high);
+        const json = await res.json();
+        if (!json.data || json.data.length === 0) {
+          container.innerHTML = '<p class="text-emerald-400 text-sm text-center py-4">✅ 无数据</p>';
           return;
         }
-        container.innerHTML = '<div class="space-y-2">' + data.map(u =>
-          '<div class="flex items-center justify-between p-3 rounded-xl bg-black/20 cursor-pointer hover:bg-white/5 transition" onclick="showDetail(' + u.user_id + ',' + hours + ')">' +
-          '<div><span class="text-white text-sm">' + u.username + '</span><span class="text-gray-500 text-xs ml-2">ID:' + u.user_id + '</span></div>' +
-          '<span class="text-xs px-2 py-0.5 rounded-full ' + (u.ip_count >= 5 ? 'bg-red-500/20 text-red-300' : 'bg-amber-500/20 text-amber-300') + '">' + u.ip_count + ' 个 IP</span>' +
-          '</div>'
-        ).join('') + '</div>';
-      } catch(e) { container.innerHTML = '<p class="text-red-400 text-sm">检测失败</p>'; }
+        const riskBadge = r => {
+          const cls = r === 'high' ? 'bg-red-500/20 text-red-300' : r === 'mid' ? 'bg-amber-500/20 text-amber-300' : 'bg-white/10 text-gray-400';
+          return '<span class="text-xs px-2 py-0.5 rounded-full ' + cls + '">' + r + '</span>';
+        };
+        container.innerHTML = '<div class="overflow-x-auto"><table class="w-full text-xs">' +
+          '<thead><tr class="text-gray-500 border-b border-white/10"><th class="py-2 text-left">用户</th><th>拉取</th><th>IP数</th><th>最近拉取</th><th>平均间隔</th><th>风险</th><th></th></tr></thead><tbody>' +
+          json.data.map(u =>
+            '<tr class="border-b border-white/5 hover:bg-white/5">' +
+            '<td class="py-2 text-white">' + u.username + ' <span class="text-gray-600">ID:' + u.user_id + '</span></td>' +
+            '<td class="text-center text-gray-300">' + u.pull_count + '</td>' +
+            '<td class="text-center text-gray-300">' + u.ip_count + '</td>' +
+            '<td class="text-center text-gray-400">' + (u.last_access || '-') + '</td>' +
+            '<td class="text-center text-gray-400">' + u.avg_interval_sec + 's</td>' +
+            '<td class="text-center">' + riskBadge(u.risk_level) + '</td>' +
+            '<td class="text-right"><button onclick="showSubStatDetail(' + u.user_id + ',' + hours + ')" class="text-rose-400 hover:text-rose-300">详情</button></td>' +
+            '</tr>'
+          ).join('') + '</tbody></table></div>';
+        // 分页
+        const totalPages = Math.ceil(json.total / json.limit);
+        if (totalPages > 1) {
+          let html = '';
+          for (let i = 1; i <= totalPages && i <= 10; i++) {
+            html += '<button onclick="loadSubStats(' + i + ')" class="text-xs px-2 py-1 rounded ' + (i === page ? 'bg-rose-600 text-white' : 'bg-white/10 text-gray-400') + '">' + i + '</button>';
+          }
+          pager.innerHTML = html;
+        }
+      } catch(e) { container.innerHTML = '<p class="text-red-400 text-sm">加载失败</p>'; }
     }
 
+    async function showSubStatDetail(userId, hours) {
+      const panel = document.getElementById('substats-detail-panel');
+      const container = document.getElementById('substats-detail');
+      panel.classList.remove('hidden');
+      container.innerHTML = '<p class="text-gray-500 text-xs">加载中...</p>';
+      try {
+        const res = await fetch('/admin/api/sub-stats/' + userId + '/detail?hours=' + hours);
+        const d = await res.json();
+        let html = '<div class="grid grid-cols-1 md:grid-cols-3 gap-4">';
+        // IP 分布
+        html += '<div><h4 class="text-gray-400 text-xs mb-2">IP 分布 (' + d.ips.length + ')</h4><div class="space-y-1">' +
+          d.ips.map(ip => '<div class="flex justify-between p-1.5 rounded bg-black/20 text-xs"><span class="text-gray-300 font-mono">' + ip.ip + '</span><span class="text-gray-500">' + ip.count + '次 ' + ip.last_access + '</span></div>').join('') + '</div></div>';
+        // UA TOP
+        html += '<div><h4 class="text-gray-400 text-xs mb-2">UA TOP</h4><div class="space-y-1">' +
+          d.uas.map(ua => '<div class="p-1.5 rounded bg-black/20 text-xs"><span class="text-gray-300 break-all">' + (ua.ua || '(empty)') + '</span> <span class="text-gray-500">' + ua.count + '次</span></div>').join('') + '</div></div>';
+        // Timeline
+        html += '<div><h4 class="text-gray-400 text-xs mb-2">最近拉取</h4><div class="space-y-1">' +
+          d.timeline.map(t => '<div class="p-1.5 rounded bg-black/20 text-xs"><span class="text-gray-400">' + t.time + '</span> <span class="text-gray-300 font-mono">' + t.ip + '</span></div>').join('') + '</div></div>';
+        html += '</div>';
+        container.innerHTML = html;
+        document.getElementById('substats-detail-title').textContent = '用户 #' + userId + ' 详情';
+      } catch(e) { container.innerHTML = '<p class="text-red-400 text-xs">加载失败</p>'; }
+    }
+
+    // 兼容旧调用
+    async function checkAbuse() { loadSubStats(1); }
+    function loadAbuse() { loadSubStats(1); }
+
     async function showDetail(userId, hours) {
-      const panel = document.getElementById('abuse-detail-panel');
-      const container = document.getElementById('abuse-detail');
+      const panel = document.getElementById('substats-detail-panel');
+      const container = document.getElementById('substats-detail');
       panel.classList.remove('hidden');
       container.innerHTML = '<p class="text-gray-500 text-xs">加载中...</p>';
       const res = await fetch('/admin/api/sub-access/' + userId + '?hours=' + hours);
@@ -392,20 +605,5 @@
       ).join('') + '</div>';
     }
 
-    async function askAI() {
-      const input = document.getElementById('ai-input'), btn = document.getElementById('ai-btn'), resp = document.getElementById('ai-response');
-      const provider = document.getElementById('admin-ai-model')?.value || '';
-      const message = input.value.trim();
-      if (!message || !provider) return;
-      btn.disabled = true; btn.textContent = '⏳'; resp.classList.remove('hidden'); resp.textContent = ''; input.value = '';
-      try {
-        const evtSource = new EventSource('/panel/ai/chat/stream?message=' + encodeURIComponent(message) + '&provider=' + provider);
-        evtSource.onmessage = (e) => {
-          if (e.data === '[DONE]') { evtSource.close(); btn.disabled = false; btn.textContent = '提问'; return; }
-          try { const data = JSON.parse(e.data); if (data.error) { resp.textContent += data.error; evtSource.close(); btn.disabled = false; btn.textContent = '提问'; return; } if (data.text) resp.textContent += data.text; resp.scrollTop = resp.scrollHeight; } catch {}
-        };
-        evtSource.onerror = () => { evtSource.close(); if (!resp.textContent) resp.textContent = '连接失败'; btn.disabled = false; btn.textContent = '提问'; };
-      } catch (e) { resp.textContent = '请求失败'; btn.disabled = false; btn.textContent = '提问'; }
-    }
   </script>
 <%- include('partials/foot') %>

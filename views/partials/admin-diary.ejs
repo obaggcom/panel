@@ -1,0 +1,129 @@
+<!-- AI 运营日记 Tab -->
+<div class="tab-panel space-y-4" data-tab="diary">
+  <!-- 头部统计 -->
+  <div class="glass rounded-2xl p-5">
+    <div class="flex items-center justify-between">
+      <div>
+        <h3 class="text-white text-sm font-medium">📔 AI 运营日记</h3>
+        <p class="text-gray-500 text-xs mt-1">小乖每次做的事情都会记录在这里，见证面板的成长 🌱</p>
+      </div>
+      <div class="text-right">
+        <div class="text-2xl font-bold text-white" id="diary-total">-</div>
+        <div class="text-[11px] text-gray-500">篇日记</div>
+      </div>
+    </div>
+    <div class="flex gap-4 mt-3 text-xs text-gray-500">
+      <span>📝 今日 <span class="text-white" id="diary-today">-</span> 篇</span>
+      <span>📅 首篇 <span class="text-gray-300" id="diary-first">-</span></span>
+    </div>
+  </div>
+
+  <!-- 时间线 -->
+  <div class="glass rounded-2xl p-5">
+    <div id="diary-timeline" class="space-y-0">
+      <p class="text-gray-600 text-xs text-center py-8">加载中...</p>
+    </div>
+    <div class="flex items-center justify-between mt-4 pt-3 border-t border-white/5">
+      <span class="text-gray-600 text-xs" id="diary-page-info"></span>
+      <div class="flex gap-1" id="diary-pager"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+async function loadDiary(page = 1) {
+  try {
+    const res = await fetch('/admin/api/diary?page=' + page);
+    const d = await res.json();
+
+    // 统计
+    if (d.stats) {
+      document.getElementById('diary-total').textContent = d.stats.total;
+      document.getElementById('diary-today').textContent = d.stats.todayCount;
+      document.getElementById('diary-first').textContent = d.stats.firstEntry
+        ? d.stats.firstEntry.slice(0, 10) : '还没有呢';
+    }
+
+    // 时间线
+    const timeline = document.getElementById('diary-timeline');
+    if (!d.rows || d.rows.length === 0) {
+      timeline.innerHTML = `<div class="text-center py-12">
+        <div class="text-4xl mb-3">📔</div>
+        <p class="text-gray-500 text-sm">还没有日记呢</p>
+        <p class="text-gray-600 text-xs mt-1">小乖开始运维后会自动记录～</p>
+      </div>`;
+    } else {
+      let lastDate = '';
+      let html = '';
+      for (const entry of d.rows) {
+        const date = entry.created_at.slice(0, 10);
+        const time = entry.created_at.slice(11, 16);
+
+        // 日期分隔
+        if (date !== lastDate) {
+          lastDate = date;
+          const weekday = ['日','一','二','三','四','五','六'][new Date(date).getDay()];
+          html += `<div class="flex items-center gap-3 py-3 ${html ? 'mt-2' : ''}">
+            <div class="h-px flex-1 bg-white/5"></div>
+            <span class="text-xs text-gray-400 font-medium">📅 ${date} 星期${weekday}</span>
+            <div class="h-px flex-1 bg-white/5"></div>
+          </div>`;
+        }
+
+        // 分类颜色
+        const catColors = {
+          'ops': 'border-blue-500/30',
+          'repair': 'border-amber-500/30',
+          'swap_ip': 'border-rose-500/30',
+          'deploy': 'border-emerald-500/30',
+          'scale': 'border-purple-500/30',
+          'patrol': 'border-cyan-500/30',
+          'milestone': 'border-yellow-500/30',
+        };
+        const borderColor = catColors[entry.category] || 'border-white/10';
+
+        html += `<div class="flex gap-3 py-2 group">
+          <div class="flex flex-col items-center flex-shrink-0">
+            <span class="text-lg">${entry.mood}</span>
+            <div class="w-px flex-1 bg-white/5 mt-1 group-last:hidden"></div>
+          </div>
+          <div class="flex-1 pb-2">
+            <div class="rounded-xl bg-black/20 border-l-2 ${borderColor} px-3 py-2.5">
+              <div class="text-xs text-gray-200 leading-relaxed whitespace-pre-wrap">${escapeHtml(entry.content)}</div>
+              <div class="flex items-center gap-2 mt-1.5">
+                <span class="text-[10px] text-gray-600">${time}</span>
+                <span class="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-gray-500">${entry.category}</span>
+              </div>
+            </div>
+          </div>
+        </div>`;
+      }
+      timeline.innerHTML = html;
+    }
+
+    // 分页
+    document.getElementById('diary-page-info').textContent =
+      d.total > 0 ? `第 ${(page-1)*20+1}-${Math.min(page*20, d.total)} 条，共 ${d.total} 条` : '';
+    const pager = document.getElementById('diary-pager');
+    pager.innerHTML = '';
+    if (d.pages > 1) {
+      for (let i = 1; i <= Math.min(d.pages, 10); i++) {
+        const btn = document.createElement('button');
+        btn.textContent = i;
+        btn.className = 'text-xs px-2 py-1 rounded ' + (i === page ? 'bg-rose-600 text-white' : 'glass text-gray-400 hover:text-white');
+        btn.onclick = () => loadDiary(i);
+        pager.appendChild(btn);
+      }
+    }
+  } catch (e) {
+    document.getElementById('diary-timeline').innerHTML =
+      '<p class="text-red-400 text-xs text-center py-4">加载失败</p>';
+  }
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+if (location.hash === '#diary') setTimeout(() => loadDiary(1), 100);
+</script>

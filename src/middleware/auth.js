@@ -24,7 +24,10 @@ function setupAuth(app) {
       if (!existing) {
         const maxUsers = parseInt(db.getSetting('max_users')) || 0;
         if (maxUsers > 0 && db.getUserCount() >= maxUsers) {
-          return done(null, false, { message: '注册已满，暂不接受新用户' });
+          // 注册白名单用户可以突破限制
+          if (!db.isInRegisterWhitelist(userInfo.username)) {
+            return done(null, false, { message: '注册已满，暂不接受新用户' });
+          }
         }
       }
 

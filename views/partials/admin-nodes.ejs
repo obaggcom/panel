@@ -1,14 +1,12 @@
 <!-- 节点管理 Tab -->
 <div class="tab-panel active space-y-4" data-tab="nodes">
   <div class="flex flex-wrap gap-2 mb-2">
-    <form method="POST" action="/admin/api/health-check" class="inline">
-      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-      <button class="glass text-white px-4 py-2 rounded-xl text-sm hover:bg-white/10 transition">🔍 检测状态</button>
-    </form>
+    <button onclick="doHealthCheck(this)" class="glass text-white px-4 py-2 rounded-xl text-sm hover:bg-white/10 transition">🔍 检测状态</button>
     <form method="POST" action="/admin/api/rotate" class="inline">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <button type="button" class="glass text-white px-4 py-2 rounded-xl text-sm hover:bg-white/10 transition" onclick="_confirm('确定轮换？').then(ok=>{if(ok)this.closest('form').submit()})">🔄 手动轮换</button>
     </form>
+    <button onclick="doUpdateAllAgents(this)" class="glass text-white px-4 py-2 rounded-xl text-sm hover:bg-white/10 transition">🔄 更新 Agent</button>
   </div>
 
   <div class="glass rounded-2xl overflow-hidden">
@@ -16,16 +14,16 @@
       <table class="w-full text-sm text-left">
         <thead class="text-gray-500 border-b border-white/5 text-xs">
           <tr>
-            <th class="py-3 px-4">名称</th><th class="py-3 px-4">地址</th><th class="py-3 px-4">端口</th>
-            <th class="py-3 px-4">等级</th><th class="py-3 px-4">状态</th><th class="py-3 px-4">最后检测</th><th class="py-3 px-4">操作</th>
+            <th class="py-3 px-2 sm:px-4">名称</th><th class="py-3 px-2 sm:px-4">地址</th><th class="py-3 px-2 sm:px-4">端口</th>
+            <th class="py-3 px-2 sm:px-4">等级</th><th class="py-3 px-2 sm:px-4">状态</th><th class="py-3 px-4 hidden sm:table-cell">Agent</th><th class="py-3 px-4 hidden md:table-cell">最后检测</th><th class="py-3 px-2 sm:px-4">操作</th>
           </tr>
         </thead>
         <tbody class="text-gray-300">
           <% nodes.forEach(function(n) { %>
-          <tr class="border-b border-white/5 hover:bg-white/[0.02]">
-            <td class="py-3 px-4 font-medium text-white"><%= n.name %></td>
-            <td class="py-3 px-4">
-              <code class="text-xs text-gray-400" id="host-display-<%= n.id %>"><%= n.host %></code>
+          <tr class="border-b border-white/5 hover:bg-white/[0.02]" data-node-id="<%= n.id %>">
+            <td class="py-3 px-2 sm:px-4 font-medium text-white text-xs"><%= n.name %></td>
+            <td class="py-3 px-2 sm:px-4">
+              <code class="text-xs text-gray-400 break-all" id="host-display-<%= n.id %>"><%= n.host %></code>
               <form method="POST" action="/admin/api/nodes/<%= n.id %>/update-host" class="hidden mt-1" id="host-form-<%= n.id %>">
                 <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                 <div class="flex gap-1">
@@ -35,33 +33,51 @@
                 </div>
               </form>
             </td>
-            <td class="py-3 px-4 text-xs"><%= n.port %></td>
-            <td class="py-3 px-4">
+            <td class="py-3 px-2 sm:px-4 text-xs"><%= n.port %></td>
+            <td class="py-3 px-2 sm:px-4">
               <select onchange="updateNodeLevel(<%= n.id %>, this.value)" class="bg-black/30 text-white text-xs px-2 py-1 rounded-lg border border-white/10">
                 <% for (let lv = 0; lv <= 4; lv++) { %>
                 <option value="<%= lv %>" <%= (n.min_level||0) === lv ? 'selected' : '' %>>Lv.<%= lv %></option>
                 <% } %>
               </select>
             </td>
-            <td class="py-3 px-4">
-              <% if (n.remark && n.remark.includes('被墙')) { %>
-                <span class="inline-block w-2.5 h-2.5 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]" title="被墙"></span>
-              <% } else if (n.remark && n.remark.includes('离线')) { %>
-                <span class="inline-block w-2.5 h-2.5 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]" title="离线"></span>
-              <% } else if (n.remark && n.remark.includes('部署中')) { %>
-                <span class="inline-block w-2.5 h-2.5 rounded-full bg-yellow-400 shadow-[0_0_6px_rgba(250,204,21,0.6)]" title="部署中"></span>
-              <% } else if (n.is_active) { %>
-                <span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]" title="在线"></span>
+            <td class="py-3 px-2 sm:px-4" data-status-cell="<%= n.id %>">
+              <div class="flex items-center gap-1.5">
+                <% if (n.remark && n.remark.includes('被墙')) { %>
+                  <span class="inline-block w-2.5 h-2.5 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]"></span>
+                  <span class="text-xs text-red-400" title="<%= n.remark %>">🧱 被墙</span>
+                <% } else if (n.remark && n.remark.includes('离线')) { %>
+                  <span class="inline-block w-2.5 h-2.5 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]"></span>
+                  <span class="text-xs text-red-400" title="<%= n.remark %>">离线</span>
+                <% } else if (n.remark && n.remark.includes('部署中')) { %>
+                  <span class="inline-block w-2.5 h-2.5 rounded-full bg-yellow-400 shadow-[0_0_6px_rgba(250,204,21,0.6)]"></span>
+                  <span class="text-xs text-yellow-400">部署中</span>
+                <% } else if (n.is_active) { %>
+                  <span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]"></span>
+                  <span class="text-xs text-emerald-400">在线</span>
+                <% } else { %>
+                  <span class="inline-block w-2.5 h-2.5 rounded-full bg-gray-500"></span>
+                  <span class="text-xs text-gray-500">未知</span>
+                <% } %>
+                <% if (n.remark && !['被墙','离线','部署中'].some(k => n.remark.includes(k))) { %>
+                  <span class="text-xs text-gray-500" title="<%= n.remark %>">(<%= n.remark.substring(0, 15) %>)</span>
+                <% } %>
+              </div>
+            </td>
+            <td class="py-3 px-4 hidden sm:table-cell" data-agent-cell="<%= n.id %>">
+              <% if (onlineAgents.has(n.id)) { %>
+                <span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]" title="Agent 在线"></span>
               <% } else { %>
-                <span class="inline-block w-2.5 h-2.5 rounded-full bg-gray-500" title="未知"></span>
+                <span class="inline-block w-2.5 h-2.5 rounded-full bg-gray-600" title="Agent 离线"></span>
               <% } %>
             </td>
-            <td class="py-3 px-4 text-xs text-gray-500"><%= n.last_check || '-' %></td>
-            <td class="py-3 px-4 space-x-2">
+            <td class="py-3 px-4 text-xs text-gray-500 hidden md:table-cell"><%= n.last_check || '-' %></td>
+            <td class="py-3 px-2 sm:px-4 space-x-1 sm:space-x-2">
               <button onclick="toggleEdit(<%= n.id %>)" class="text-rose-400 hover:text-rose-300 text-xs">编辑</button>
+              <button onclick="restartXray(<%= n.id %>, this)" class="text-amber-400 hover:text-amber-300 text-xs">重启</button>
               <form method="POST" action="/admin/api/nodes/<%= n.id %>/delete" class="inline">
                 <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                <button type="button" class="text-red-400 hover:text-red-300 text-xs" onclick="_confirm('确定删除？').then(ok=>{if(ok)this.closest('form').submit()})">删除</button>
+                <button type="button" class="text-red-400 hover:text-red-300 text-xs" onclick="_confirm('确定删除？将停止远端 Xray 和 Agent 服务').then(ok=>{if(ok)this.closest('form').submit()})">删除</button>
               </form>
             </td>
           </tr>
@@ -93,4 +109,82 @@
     </form>
   </details>
 
-  </div>
+</div>
+
+<script>
+// CSRF token
+const _csrf = '<%= csrfToken %>';
+
+// 检测状态 (AJAX)
+async function doHealthCheck(btn) {
+  const origText = btn.textContent;
+  btn.textContent = '⏳ 检测中...';
+  btn.disabled = true;
+  try {
+    const resp = await fetch('/admin/api/health-check', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _csrf },
+      body: JSON.stringify({})
+    });
+    const data = await resp.json();
+    if (data.ok && data.results) {
+      data.results.forEach(r => {
+        const agentCell = document.querySelector(`[data-agent-cell="${r.nodeId}"]`);
+        if (agentCell) {
+          agentCell.innerHTML = r.agent
+            ? `<span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]" title="Agent 在线${r.online ? '' : ' (ping 失败)'}"></span>`
+            : `<span class="inline-block w-2.5 h-2.5 rounded-full bg-gray-600" title="Agent 离线"></span>`;
+        }
+      });
+      btn.textContent = `✅ 检测完成 (${data.results.filter(r => r.online).length}/${data.results.length})`;
+    } else {
+      btn.textContent = '❌ 检测失败';
+    }
+  } catch (e) {
+    btn.textContent = '❌ 网络错误';
+  }
+  setTimeout(() => { btn.textContent = origText; btn.disabled = false; }, 3000);
+}
+
+// 重启 Xray
+async function restartXray(nodeId, btn) {
+  const origText = btn.textContent;
+  btn.textContent = '⏳';
+  btn.disabled = true;
+  try {
+    const resp = await fetch(`/admin/api/nodes/${nodeId}/restart-xray`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _csrf },
+      body: JSON.stringify({})
+    });
+    const data = await resp.json();
+    btn.textContent = data.success ? '✅' : '❌';
+  } catch {
+    btn.textContent = '❌';
+  }
+  setTimeout(() => { btn.textContent = origText; btn.disabled = false; }, 2000);
+}
+
+// 批量更新 Agent
+async function doUpdateAllAgents(btn) {
+  const ok = await _confirm('确定向所有在线 Agent 发送更新指令？');
+  if (!ok) return;
+  const origText = btn.textContent;
+  btn.textContent = '⏳ 更新中...';
+  btn.disabled = true;
+  try {
+    const resp = await fetch('/admin/api/agents/update-all', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _csrf },
+      body: JSON.stringify({})
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      const ok = data.results.filter(r => r.success).length;
+      btn.textContent = `✅ ${ok}/${data.results.length} 成功`;
+    } else {
+      btn.textContent = '❌ 失败';
+    }
+  } catch {
+    btn.textContent = '❌ 网络错误';
+  }
+  setTimeout(() => { btn.textContent = origText; btn.disabled = false; }, 3000);
+}
+</script>

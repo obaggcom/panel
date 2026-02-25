@@ -8,24 +8,30 @@ router.use(requireAuth, requireAdmin);
 
 router.get('/', (req, res) => {
   const tgEvents = {};
-  ['tg_on_login','tg_on_node_down','tg_on_rotate','tg_on_admin','tg_on_abuse','tg_on_traffic'].forEach(k => {
+  ['tg_on_node_down','tg_on_node_blocked','tg_on_rotate','tg_on_abuse','tg_on_traffic','tg_on_register','tg_on_deploy'].forEach(k => {
     tgEvents[k] = db.getSetting(k) === 'true';
   });
+  const agentWs = require('../services/agent-ws');
+  const onlineAgents = new Set(agentWs.getConnectedAgents().map(a => a.nodeId));
+
   res.render('admin', {
     users: db.getAllUsers(),
     nodes: db.getAllNodes(),
+    onlineAgents,
     whitelist: db.getWhitelist(),
-    logs: db.getAuditLogs(50, 0),
+    logs: db.getAuditLogs(50, 0, 'system'),
     globalTraffic: db.getGlobalTraffic(),
+    todayTraffic: db.getTodayTraffic(),
     usersTraffic: db.getAllUsersTraffic(new Date().toISOString().slice(0,10)),
-    aiProviders: db.getAllAiProviders(),
     formatBytes,
     tgBotToken: db.getSetting('tg_bot_token') || '',
     tgChatId: db.getSetting('tg_chat_id') || '',
     tgEvents,
     announcement: db.getSetting('announcement') || '',
     maxUsers: parseInt(db.getSetting('max_users')) || 0,
-    userCount: db.getUserCount()
+    userCount: db.getUserCount(),
+    registerWhitelist: db.getRegisterWhitelist(),
+    defaultTrafficLimit: parseInt(db.getSetting('default_traffic_limit')) || 0
   });
 });
 

@@ -20,10 +20,6 @@ async function send(text) {
 
 // 通知类型
 const notify = {
-  login(username, ip) {
-    if (db.getSetting('tg_on_login') !== 'true') return;
-    send(`👤 <b>用户登录</b>\n用户: ${username}\nIP: ${ip}\n时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`).catch(() => {});
-  },
   nodeDown(nodeName) {
     if (db.getSetting('tg_on_node_down') !== 'true') return;
     send(`🔴 <b>节点离线</b>\n节点: ${nodeName}\n时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`).catch(() => {});
@@ -32,13 +28,13 @@ const notify = {
     if (db.getSetting('tg_on_node_down') !== 'true') return;
     send(`🟢 <b>节点恢复</b>\n节点: ${nodeName}\n时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`).catch(() => {});
   },
+  nodeBlocked(nodeName, action) {
+    if (db.getSetting('tg_on_node_blocked') !== 'true') return;
+    send(`🧱 <b>节点疑似被墙</b>\n节点: ${nodeName}\n动作: ${action || '等待处理'}\n时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`).catch(() => {});
+  },
   rotate(result) {
     if (db.getSetting('tg_on_rotate') !== 'true') return;
     send(`🔄 <b>自动轮换完成</b>\n节点同步: ✅${result.success} ❌${result.failed}\nUUID重置: ${result.uuidCount}\n订阅重置: ${result.tokenCount}`).catch(() => {});
-  },
-  adminAction(username, action, detail) {
-    if (db.getSetting('tg_on_admin') !== 'true') return;
-    send(`⚙️ <b>管理操作</b>\n管理员: ${username}\n操作: ${action}\n${detail || ''}`).catch(() => {});
   },
   abuse(username, ipCount) {
     if (db.getSetting('tg_on_abuse') !== 'true') return;
@@ -48,6 +44,14 @@ const notify = {
     if (db.getSetting('tg_on_traffic') !== 'true') return;
     const gb = (bytes / 1073741824).toFixed(2);
     send(`📊 <b>流量超标</b>\n用户: ${username}\n今日已用: ${gb} GB`).catch(() => {});
+  },
+  userRegister(username) {
+    if (db.getSetting('tg_on_register') !== 'true') return;
+    send(`👤 <b>新用户注册</b>\n用户: ${username}\n时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`).catch(() => {});
+  },
+  deploy(nodeName, success, detail) {
+    if (db.getSetting('tg_on_deploy') !== 'true') return;
+    send(`${success ? '✅' : '❌'} <b>节点部署${success ? '成功' : '失败'}</b>\n节点: ${nodeName}\n${detail || ''}\n时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`).catch(() => {});
   },
   ops(msg) {
     if (db.getSetting('tg_on_ops') !== 'true') return;

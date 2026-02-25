@@ -2,9 +2,8 @@ const express = require('express');
 const db = require('../services/database');
 const { buildVlessLink, generateV2raySubForUser, generateClashSubForUser, generateSingboxSubForUser, detectClient } = require('../utils/vless');
 const { formatBytes } = require('../services/traffic');
-const aiService = require('../services/ai');
 const { requireAuth } = require('../middleware/auth');
-const { aiLimiter, subLimiter } = require('../middleware/rateLimit');
+const { subLimiter } = require('../middleware/rateLimit');
 const QRCode = require('qrcode');
 
 const router = express.Router();
@@ -26,6 +25,45 @@ function getRealClientIp(req) {
 }
 
 // 首页 - 节点列表（每个用户看到自己的 UUID）
+function getNowShanghaiParts(date = new Date()) {
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false
+  });
+  const p = Object.fromEntries(fmt.formatToParts(date).filter(x => x.type !== 'literal').map(x => [x.type, x.value]));
+  return {
+    year: parseInt(p.year), month: parseInt(p.month), day: parseInt(p.day),
+    hour: parseInt(p.hour), minute: parseInt(p.minute), second: parseInt(p.second)
+  };
+}
+
+function shanghaiToUtcMs(year, month, day, hour = 0, minute = 0, second = 0) {
+  // 上海固定 UTC+8
+  return Date.UTC(year, month - 1, day, hour - 8, minute, second);
+}
+
+function nextUuidResetAtMs(now = new Date()) {
+  const n = getNowShanghaiParts(now);
+  const today3 = shanghaiToUtcMs(n.year, n.month, n.day, 3, 0, 0);
+  if (now.getTime() < today3) return today3;
+  const t = new Date(shanghaiToUtcMs(n.year, n.month, n.day, 12, 0, 0));
+  t.setUTCDate(t.getUTCDate() + 1);
+  const y = getNowShanghaiParts(t);
+  return shanghaiToUtcMs(y.year, y.month, y.day, 3, 0, 0);
+}
+
+function nextTokenResetAtMs(now = new Date()) {
+  const last = db.getSetting('last_token_rotate') || '2000-01-01';
+  const [y,m,d] = String(last).split('-').map(v => parseInt(v));
+  if (!y || !m || !d) return nextUuidResetAtMs(now);
+  const last3 = shanghaiToUtcMs(y, m, d, 3, 0, 0);
+  const next = new Date(last3);
+  next.setUTCDate(next.getUTCDate() + 7);
+  return next.getTime();
+}
+
 router.get('/', requireAuth, (req, res) => {
   const isVip = db.isInWhitelist(req.user.nodeloc_id);
   const nodes = db.getAllNodes(true).filter(n => isVip || req.user.trust_level >= (n.min_level || 0));
@@ -42,98 +80,12 @@ router.get('/', requireAuth, (req, res) => {
 
   res.render('panel', {
     user, userNodes, traffic, globalTraffic, formatBytes,
+    trafficLimit: user.traffic_limit || 0,
     subUrl: `${req.protocol}://${req.get('host')}/sub/${user.sub_token}`,
+    nextUuidResetAt: nextUuidResetAtMs(),
+    nextSubResetAt: nextTokenResetAtMs(),
     announcement: db.getSetting('announcement') || '',
-    hasAi: db.getEnabledAiProviders().length > 0
   });
-});
-
-// 获取可用 AI 模型列表
-router.get('/ai/models', requireAuth, (req, res) => {
-  const providers = db.getEnabledAiProviders();
-  res.json(providers.map(p => ({
-    id: p.id,
-    name: p.model_name || p.name,
-    type: p.type
-  })));
-});
-
-// 用户 AI 流式对话
-router.get('/ai/chat/stream', requireAuth, aiLimiter, async (req, res) => {
-  const message = req.query.message;
-  const providerId = req.query.provider;
-  const sessionId = req.query.session;
-  if (!message?.trim()) return res.status(400).end();
-
-  const history = db.getAiChatHistory(req.user.id, 10, sessionId);
-  db.addAiChat(req.user.id, 'user', message, providerId ? parseInt(providerId) : null, sessionId);
-  const provider = providerId ? db.getAiProviderById(parseInt(providerId)) : null;
-  db.addAuditLog(req.user.id, 'ai_chat', `AI 对话 [${provider?.name || '默认'}]`, req.ip);
-
-  // 如果是新会话的第一条消息，用消息前20字做标题
-  if (sessionId && history.length === 0) {
-    db.updateAiSessionTitle(sessionId, message.slice(0, 20) + (message.length > 20 ? '...' : ''));
-  }
-
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive',
-    'X-Accel-Buffering': 'no'
-  });
-
-  let fullResponse = '';
-  let closed = false;
-  req.on('close', () => { closed = true; });
-
-  await aiService.chatStream(
-    message,
-    history,
-    (chunk) => {
-      if (closed) return;
-      fullResponse += chunk;
-      try { res.write(`data: ${JSON.stringify({ text: chunk })}\n\n`); } catch {}
-    },
-    () => {
-      db.addAiChat(req.user.id, 'assistant', fullResponse, providerId ? parseInt(providerId) : null, sessionId);
-      if (!closed) { try { res.write(`data: [DONE]\n\n`); res.end(); } catch {} }
-    },
-    (error) => {
-      if (!closed) { try { res.write(`data: ${JSON.stringify({ error })}\n\n`); res.write(`data: [DONE]\n\n`); res.end(); } catch {} }
-    },
-    providerId ? parseInt(providerId) : undefined
-  );
-});
-
-// 会话列表
-router.get('/ai/sessions', requireAuth, (req, res) => {
-  res.json(db.getAiSessions(req.user.id));
-});
-
-// 新建会话
-router.post('/ai/sessions', requireAuth, (req, res) => {
-  const id = require('crypto').randomUUID();
-  const session = db.createAiSession(req.user.id, id, '新对话');
-  res.json(session);
-});
-
-// 删除会话
-router.delete('/ai/sessions/:id', requireAuth, (req, res) => {
-  db.deleteAiSession(req.params.id, req.user.id);
-  res.json({ ok: true });
-});
-
-// 获取用户对话历史
-router.get('/ai/chat/history', requireAuth, (req, res) => {
-  const sessionId = req.query.session;
-  const history = db.getAiChatHistory(req.user.id, 50, sessionId);
-  res.json(history);
-});
-
-// 清空用户对话历史
-router.post('/ai/chat/clear', requireAuth, (req, res) => {
-  db.clearAiChatHistory(req.user.id);
-  res.json({ ok: true });
 });
 
 // 当前登录用户订阅二维码（便于手机扫码）
@@ -195,38 +147,58 @@ router.get('/sub/:token', subLimiter, (req, res) => {
 
   // 获取用户流量用于 Subscription-Userinfo
   const traffic = db.getUserTraffic(user.id);
+  const trafficLimit = user.traffic_limit || 0;
+  const totalBytes = trafficLimit > 0 ? trafficLimit : 1125899906842624; // 默认 1PB
+  const exceeded = trafficLimit > 0 && (traffic.total_up + traffic.total_down) >= trafficLimit;
 
   db.addAuditLog(user.id, 'sub_fetch', `订阅拉取 [${clientType}] IP: ${clientIP}`, clientIP);
 
-  const subInfo = `upload=${traffic.total_up}; download=${traffic.total_down}; total=107374182400; expire=0`;
+  // 流量超额则返回空节点列表
+  const finalNodes = exceeded ? [] : userNodes;
+  const subInfo = `upload=${traffic.total_up}; download=${traffic.total_down}; total=${totalBytes}; expire=0`;
+
+  const panelName = encodeURIComponent('小姨子的诱惑');
 
   if (clientType === 'clash') {
     res.set({
       'Content-Type': 'text/yaml; charset=utf-8',
-      'Content-Disposition': 'attachment; filename="clash.yaml"',
+      'Content-Disposition': `attachment; filename*=UTF-8''${panelName}`,
       'Profile-Update-Interval': '6',
       'Subscription-Userinfo': subInfo,
       'Cache-Control': 'no-cache'
     });
-    return res.send(generateClashSubForUser(userNodes));
+    return res.send(generateClashSubForUser(finalNodes));
   }
 
   if (clientType === 'singbox') {
     res.set({
       'Content-Type': 'application/json; charset=utf-8',
-      'Content-Disposition': 'attachment; filename="singbox.json"',
+      'Content-Disposition': `attachment; filename*=UTF-8''${panelName}`,
+      'Subscription-Userinfo': subInfo,
       'Cache-Control': 'no-cache'
     });
-    return res.send(generateSingboxSubForUser(userNodes));
+    return res.send(generateSingboxSubForUser(finalNodes));
   }
 
   res.set({
     'Content-Type': 'text/plain; charset=utf-8',
-    'Content-Disposition': 'attachment; filename="nodes.txt"',
+    'Content-Disposition': `attachment; filename*=UTF-8''${panelName}`,
     'Subscription-Userinfo': subInfo,
     'Cache-Control': 'no-cache'
   });
-  res.send(generateV2raySubForUser(userNodes));
+  res.send(generateV2raySubForUser(finalNodes, { upload: traffic.total_up, download: traffic.total_down, total: totalBytes }));
+});
+
+// 在线用户数（从巡检缓存读取，每 5 分钟自动刷新）
+router.get('/online-count', requireAuth, (req, res) => {
+  const { getOnlineCache } = require('../services/health');
+  const cache = getOnlineCache();
+  const summary = cache.summary || { online: '-', nodes: 0 };
+  // 前台显示 2 倍在线人数
+  const display = typeof summary.online === 'number'
+    ? { ...summary, online: summary.online * 2 }
+    : summary;
+  res.json(display);
 });
 
 module.exports = router;

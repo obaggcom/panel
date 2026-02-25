@@ -11,12 +11,36 @@ function buildVlessLink(node, uuid) {
   } else {
     params.set('security', node.security || 'none');
   }
-  return `vless://${uuid || node.uuid}@${node.host}:${node.port}?${params}#${node.name.replace(/ /g, '%20')}`;
+  return `vless://${uuid || node.uuid}@${node.host}:${node.port}?${params}#${encodeURIComponent(node.name)}`;
+}
+
+// 生成信息假节点 vless 链接
+function buildInfoLink(text) {
+  return `vless://00000000-0000-0000-0000-000000000000@127.0.0.1:0?type=tcp&security=none#${encodeURIComponent(text)}`;
+}
+
+// 格式化字节数
+function formatBytes(bytes) {
+  if (bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  return (bytes / Math.pow(1024, i)).toFixed(2) + ' ' + units[i];
 }
 
 // v2ray 订阅（base64 编码的链接列表）
-function generateV2raySub(nodes) {
-  const links = nodes.map(n => buildVlessLink(n)).join('\n');
+function generateV2raySub(nodes, trafficInfo) {
+  const infoLinks = [];
+  if (trafficInfo) {
+    infoLinks.push(buildInfoLink('🍑 小姨子的诱惑 | vip.vip.sd'));
+    const used = trafficInfo.upload + trafficInfo.download;
+    if (trafficInfo.total > 0) {
+      const remain = Math.max(0, trafficInfo.total - used);
+      infoLinks.push(buildInfoLink(`📊 剩余: ${formatBytes(remain)} | 已用: ${formatBytes(used)}`));
+    } else {
+      infoLinks.push(buildInfoLink(`📊 已用: ${formatBytes(used)} | 无限制`));
+    }
+  }
+  const links = [...infoLinks, ...nodes.map(n => buildVlessLink(n))].join('\n');
   return Buffer.from(links).toString('base64');
 }
 

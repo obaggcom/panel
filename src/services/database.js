@@ -34,6 +34,8 @@ function initTables() {
       sub_token TEXT UNIQUE NOT NULL,
       is_admin INTEGER DEFAULT 0,
       is_blocked INTEGER DEFAULT 0,
+      is_frozen INTEGER DEFAULT 0,
+      traffic_limit INTEGER DEFAULT 0,
       max_devices INTEGER DEFAULT 3,
       created_at TEXT DEFAULT (datetime('now')),
       last_login TEXT
@@ -197,6 +199,17 @@ function initTables() {
   upsert.run('rotate_port_min', '10000');
   upsert.run('rotate_port_max', '60000');
   upsert.run('max_users', '0'); // 0 = 不限制
+  upsert.run('default_traffic_limit', '0'); // 0 = 无限，单位字节
+  upsert.run('agent_token', uuidv4()); // Agent 认证 token
+
+  // 注册白名单表（满额时允许特定用户名注册，注册后自动移除）
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS register_whitelist (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT UNIQUE NOT NULL,
+      added_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
 
   // 迁移：给 nodes 表补充 socks5 字段（已有表可能缺少）
   const cols = db.prepare("PRAGMA table_info(nodes)").all().map(c => c.name);
@@ -235,6 +248,18 @@ function initTables() {
   if (!cols.includes('fail_count')) {
     db.exec("ALTER TABLE nodes ADD COLUMN fail_count INTEGER DEFAULT 0");
   }
+  if (!cols.includes('agent_last_report')) {
+    db.exec("ALTER TABLE nodes ADD COLUMN agent_last_report TEXT");
+  }
+
+  // 迁移：用户表补充 is_frozen 字段
+  const userCols = db.prepare("PRAGMA table_info(users)").all().map(c => c.name);
+  if (!userCols.includes('is_frozen')) {
+    db.exec("ALTER TABLE users ADD COLUMN is_frozen INTEGER DEFAULT 0");
+  }
+  if (!userCols.includes('traffic_limit')) {
+    db.exec("ALTER TABLE users ADD COLUMN traffic_limit INTEGER DEFAULT 0");
+  }
 
   // AWS 多账号表
   db.exec(`
@@ -251,6 +276,17 @@ function initTables() {
       enabled INTEGER DEFAULT 1,
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  // AI 运营日记表
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ops_diary (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      content TEXT NOT NULL,
+      mood TEXT DEFAULT '🐱',
+      category TEXT DEFAULT 'ops',
+      created_at TEXT DEFAULT (datetime('now'))
     )
   `);
 
@@ -309,11 +345,18 @@ function initTables() {
 function findOrCreateUser(profile) {
   const existing = getDb().prepare('SELECT * FROM users WHERE nodeloc_id = ?').get(profile.id);
   if (existing) {
+    const wasFrozen = existing.is_frozen;
     getDb().prepare(`
-      UPDATE users SET username = ?, name = ?, avatar_url = ?, trust_level = ?, email = ?, last_login = datetime('now')
+      UPDATE users SET username = ?, name = ?, avatar_url = ?, trust_level = ?, email = ?, is_frozen = 0, last_login = datetime('now')
       WHERE nodeloc_id = ?
     `).run(profile.username, profile.name, profile.avatar_url, profile.trust_level, profile.email, profile.id);
-    return getDb().prepare('SELECT * FROM users WHERE nodeloc_id = ?').get(profile.id);
+    const user = getDb().prepare('SELECT * FROM users WHERE nodeloc_id = ?').get(profile.id);
+    // 冻结用户登录时自动解冻，重新分配所有节点 UUID
+    if (wasFrozen) {
+      ensureUserHasAllNodeUuids(user.id);
+      user._wasFrozen = true;
+    }
+    return user;
   }
 
   const subToken = uuidv4();
@@ -321,22 +364,33 @@ function findOrCreateUser(profile) {
   const userCount = getDb().prepare('SELECT COUNT(*) as count FROM users').get().count;
   const isAdmin = userCount === 0 ? 1 : 0;
 
+  const defaultLimit = parseInt(getSetting('default_traffic_limit')) || 0;
+
   getDb().prepare(`
-    INSERT INTO users (nodeloc_id, username, name, avatar_url, trust_level, email, sub_token, is_admin, last_login)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-  `).run(profile.id, profile.username, profile.name, profile.avatar_url, profile.trust_level, profile.email, subToken, isAdmin);
+    INSERT INTO users (nodeloc_id, username, name, avatar_url, trust_level, email, sub_token, is_admin, traffic_limit, last_login)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+  `).run(profile.id, profile.username, profile.name, profile.avatar_url, profile.trust_level, profile.email, subToken, isAdmin, defaultLimit);
 
   const newUser = getDb().prepare('SELECT * FROM users WHERE nodeloc_id = ?').get(profile.id);
   if (isAdmin) console.log(`👑 首位用户 ${profile.username} 已自动设为管理员`);
 
+  // 记录新用户注册
+  addAuditLog(null, 'user_register', `新用户注册: ${profile.username}${isAdmin ? ' (管理员)' : ''}`, 'system');
+
+  // TG 通知新用户注册
+  try { const { notify } = require('./notify'); notify.userRegister(profile.username); } catch {}
+
   // 为新用户在所有节点生成 UUID
   ensureUserHasAllNodeUuids(newUser.id);
+
+  // 注册成功后自动从注册白名单移除
+  removeFromRegisterWhitelist(profile.username);
 
   return newUser;
 }
 
 function getUserBySubToken(token) {
-  return getDb().prepare('SELECT * FROM users WHERE sub_token = ? AND is_blocked = 0').get(token);
+  return getDb().prepare('SELECT * FROM users WHERE sub_token = ? AND is_blocked = 0 AND is_frozen = 0').get(token);
 }
 
 function getUserById(id) {
@@ -351,12 +405,49 @@ function getAllUsers() {
   return getDb().prepare(`
     SELECT u.*, COALESCE(SUM(t.uplink),0)+COALESCE(SUM(t.downlink),0) as total_traffic
     FROM users u LEFT JOIN traffic_daily t ON u.id = t.user_id
-    GROUP BY u.id ORDER BY u.last_login DESC
+    GROUP BY u.id ORDER BY total_traffic DESC
   `).all();
 }
 
 function blockUser(id, blocked) {
   getDb().prepare('UPDATE users SET is_blocked = ? WHERE id = ?').run(blocked ? 1 : 0, id);
+}
+
+function setUserTrafficLimit(id, limitBytes) {
+  getDb().prepare('UPDATE users SET traffic_limit = ? WHERE id = ?').run(limitBytes, id);
+}
+
+function isTrafficExceeded(userId) {
+  const user = getUserById(userId);
+  if (!user || !user.traffic_limit) return false;
+  const traffic = getDb().prepare(
+    'SELECT COALESCE(SUM(uplink), 0) + COALESCE(SUM(downlink), 0) as total FROM traffic_daily WHERE user_id = ?'
+  ).get(userId);
+  return traffic.total >= user.traffic_limit;
+}
+
+// 冻结用户：删除其所有 node UUID
+function freezeUser(id) {
+  getDb().prepare('UPDATE users SET is_frozen = 1 WHERE id = ?').run(id);
+  getDb().prepare('DELETE FROM user_node_uuid WHERE user_id = ?').run(id);
+}
+
+// 解冻用户：恢复并分配所有节点 UUID
+function unfreezeUser(id) {
+  getDb().prepare('UPDATE users SET is_frozen = 0 WHERE id = ?').run(id);
+  ensureUserHasAllNodeUuids(id);
+}
+
+// 自动冻结超过 N 天未登录的用户（返回被冻结的用户列表）
+function autoFreezeInactiveUsers(days = 15) {
+  const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+  const users = getDb().prepare(
+    "SELECT id, username FROM users WHERE is_frozen = 0 AND is_blocked = 0 AND is_admin = 0 AND last_login < ?"
+  ).all(cutoff);
+  for (const u of users) {
+    freezeUser(u.id);
+  }
+  return users;
 }
 
 function resetSubToken(userId) {
@@ -385,6 +476,24 @@ function addToWhitelist(nodeloc_id) {
 
 function removeFromWhitelist(nodeloc_id) {
   getDb().prepare('DELETE FROM whitelist WHERE nodeloc_id = ?').run(nodeloc_id);
+}
+
+// ========== 注册白名单（满额时允许特定用户名注册）==========
+
+function isInRegisterWhitelist(username) {
+  return !!getDb().prepare('SELECT 1 FROM register_whitelist WHERE username = ?').get(username);
+}
+
+function getRegisterWhitelist() {
+  return getDb().prepare('SELECT * FROM register_whitelist ORDER BY added_at DESC').all();
+}
+
+function addToRegisterWhitelist(username) {
+  getDb().prepare('INSERT OR IGNORE INTO register_whitelist (username) VALUES (?)').run(username.trim());
+}
+
+function removeFromRegisterWhitelist(username) {
+  getDb().prepare('DELETE FROM register_whitelist WHERE username = ?').run(username.trim());
 }
 
 // ========== 节点操作 ==========
@@ -429,7 +538,7 @@ function addNode(node) {
 }
 
 function updateNode(id, fields) {
-  const allowed = ['name','host','port','uuid','ssh_host','ssh_port','ssh_user','ssh_password','ssh_key_path','region','remark','is_active','last_check','last_rotated','socks5_host','socks5_port','socks5_user','socks5_pass','min_level','reality_private_key','reality_public_key','reality_short_id','sni','aws_instance_id','aws_type','aws_region','aws_account_id','is_manual','fail_count'];
+  const allowed = ['name','host','port','uuid','ssh_host','ssh_port','ssh_user','ssh_password','ssh_key_path','region','remark','is_active','last_check','last_rotated','socks5_host','socks5_port','socks5_user','socks5_pass','min_level','reality_private_key','reality_public_key','reality_short_id','sni','aws_instance_id','aws_type','aws_region','aws_account_id','is_manual','fail_count','agent_last_report'];
   const safe = Object.fromEntries(Object.entries(fields).filter(([k]) => allowed.includes(k)));
   if (Object.keys(safe).length === 0) return;
   const sets = Object.keys(safe).map(k => `${k} = ?`).join(', ');
@@ -453,13 +562,15 @@ function addAuditLog(userId, action, detail, ip) {
   getDb().prepare('INSERT INTO audit_log (user_id, action, detail, ip) VALUES (?, ?, ?, ?)').run(userId, action, detail, ip);
 }
 
-function getAuditLogs(limit = 50, offset = 0) {
+function getAuditLogs(limit = 50, offset = 0, type = 'all') {
+  const where = type === 'system' ? "WHERE a.ip = 'system'" : type === 'user' ? "WHERE a.ip != 'system'" : '';
   const rows = getDb().prepare(`
     SELECT a.*, u.username FROM audit_log a
     LEFT JOIN users u ON a.user_id = u.id
+    ${where}
     ORDER BY a.created_at DESC LIMIT ? OFFSET ?
   `).all(limit, offset);
-  const total = getDb().prepare('SELECT COUNT(*) as c FROM audit_log').get().c;
+  const total = getDb().prepare(`SELECT COUNT(*) as c FROM audit_log a ${where}`).get().c;
   return { rows, total };
 }
 
@@ -559,14 +670,14 @@ function getNodeAllUserUuids(nodeId) {
     JOIN users u ON un.user_id = u.id
     JOIN nodes n ON un.node_id = n.id
     LEFT JOIN whitelist w ON u.nodeloc_id = w.nodeloc_id
-    WHERE un.node_id = ? AND u.is_blocked = 0
+    WHERE un.node_id = ? AND u.is_blocked = 0 AND u.is_frozen = 0
       AND (w.nodeloc_id IS NOT NULL OR u.trust_level >= n.min_level)
   `).all(nodeId);
 }
 
-// 为所有用户在指定节点生成 UUID
+// 为所有活跃用户在指定节点生成 UUID（跳过冻结和封禁用户）
 function ensureAllUsersHaveUuid(nodeId) {
-  const users = getAllUsers();
+  const users = getAllUsers().filter(u => !u.is_frozen && !u.is_blocked);
   const stmt = getDb().prepare('INSERT OR IGNORE INTO user_node_uuid (user_id, node_id, uuid) VALUES (?, ?, ?)');
   const insertMany = getDb().transaction((users) => {
     for (const user of users) {
@@ -680,6 +791,69 @@ function getGlobalTraffic() {
     SELECT COALESCE(SUM(uplink), 0) as total_up, COALESCE(SUM(downlink), 0) as total_down
     FROM traffic_daily
   `).get();
+}
+
+// 获取今日全局流量
+function getTodayTraffic() {
+  const today = new Date().toISOString().slice(0, 10);
+  return getDb().prepare(`
+    SELECT COALESCE(SUM(uplink), 0) as total_up, COALESCE(SUM(downlink), 0) as total_down
+    FROM traffic_daily WHERE date = ?
+  `).get(today);
+}
+
+// 按时间范围构建 date 条件
+function _rangeDateCondition(range) {
+  const today = new Date().toISOString().slice(0, 10);
+  if (range === 'today') return { where: 'AND t.date = ?', params: [today] };
+  if (range === '7d') {
+    const d = new Date(); d.setDate(d.getDate() - 6);
+    return { where: 'AND t.date >= ?', params: [d.toISOString().slice(0, 10)] };
+  }
+  if (range === '30d') {
+    const d = new Date(); d.setDate(d.getDate() - 29);
+    return { where: 'AND t.date >= ?', params: [d.toISOString().slice(0, 10)] };
+  }
+  return { where: '', params: [] }; // all
+}
+
+// 按时间范围查用户流量排行
+function getUsersTrafficByRange(range, limit = 20, offset = 0) {
+  const { where, params } = _rangeDateCondition(range);
+  const rows = getDb().prepare(`
+    SELECT u.id, u.username, u.name, u.avatar_url,
+      COALESCE(SUM(t.uplink), 0) as total_up,
+      COALESCE(SUM(t.downlink), 0) as total_down
+    FROM users u
+    LEFT JOIN traffic_daily t ON u.id = t.user_id ${where}
+    GROUP BY u.id
+    HAVING total_up + total_down > 0
+    ORDER BY (total_up + total_down) DESC
+    LIMIT ? OFFSET ?
+  `).all(...params, limit, offset);
+  const total = getDb().prepare(`
+    SELECT COUNT(*) as c FROM (
+      SELECT u.id FROM users u
+      LEFT JOIN traffic_daily t ON u.id = t.user_id ${where}
+      GROUP BY u.id HAVING COALESCE(SUM(t.uplink),0) + COALESCE(SUM(t.downlink),0) > 0
+    )
+  `).get(...params).c;
+  return { rows, total };
+}
+
+// 按时间范围查节点流量排行
+function getNodesTrafficByRange(range) {
+  const { where, params } = _rangeDateCondition(range);
+  return getDb().prepare(`
+    SELECT n.id, n.name,
+      COALESCE(SUM(t.uplink), 0) as total_up,
+      COALESCE(SUM(t.downlink), 0) as total_down
+    FROM nodes n
+    LEFT JOIN traffic_daily t ON n.id = t.node_id ${where}
+    GROUP BY n.id
+    HAVING total_up + total_down > 0
+    ORDER BY (total_up + total_down) DESC
+  `).all(...params);
 }
 
 // ========== 运维诊断 ==========
@@ -830,20 +1004,114 @@ function getSubAbuseUsers(hours = 24, minIPs = 3) {
   `).all(hours, minIPs);
 }
 
+// 订阅访问统计 - 按用户聚合
+function getSubAccessStats(hours = 24, limit = 50, offset = 0, onlyHigh = false, sort = 'count') {
+  const orderMap = { count: 'pull_count DESC', ip: 'ip_count DESC', last: 'last_access DESC' };
+  const orderBy = orderMap[sort] || orderMap.count;
+
+  // 先查总数
+  const baseWhere = `WHERE created_at > datetime('now', '-' || @hours || ' hours')`;
+  const havingClause = onlyHigh
+    ? 'HAVING COUNT(*) > 100 OR COUNT(DISTINCT ip) > 8'
+    : '';
+
+  const countRow = getDb().prepare(`
+    SELECT COUNT(*) as total FROM (
+      SELECT user_id FROM sub_access_log ${baseWhere}
+      GROUP BY user_id ${havingClause}
+    )
+  `).get({ hours });
+
+  const rows = getDb().prepare(`
+    SELECT
+      user_id,
+      COUNT(*) as pull_count,
+      COUNT(DISTINCT ip) as ip_count,
+      MAX(created_at) as last_access,
+      ROUND((@hours * 3600.0) / MAX(COUNT(*), 1), 1) as avg_interval_sec
+    FROM sub_access_log ${baseWhere}
+    GROUP BY user_id ${havingClause}
+    ORDER BY ${orderBy}
+    LIMIT @limit OFFSET @offset
+  `).all({ hours, limit, offset });
+
+  const data = rows.map(r => {
+    const user = getUserById(r.user_id);
+    const risk = (r.pull_count > 100 || r.ip_count > 8) ? 'high'
+      : (r.pull_count >= 30 || r.ip_count >= 4) ? 'mid' : 'low';
+    return { ...r, username: user?.username || '未知', risk_level: risk };
+  });
+
+  return { total: countRow.total, data };
+}
+
+// 订阅访问统计 - 用户详情
+function getSubAccessUserDetail(userId, hours = 24) {
+  const ips = getDb().prepare(`
+    SELECT ip, COUNT(*) as count, MAX(created_at) as last_access
+    FROM sub_access_log
+    WHERE user_id = ? AND created_at > datetime('now', '-' || ? || ' hours')
+    GROUP BY ip ORDER BY count DESC
+  `).all(userId, hours);
+
+  const uas = getDb().prepare(`
+    SELECT ua, COUNT(*) as count
+    FROM sub_access_log
+    WHERE user_id = ? AND created_at > datetime('now', '-' || ? || ' hours')
+    GROUP BY ua ORDER BY count DESC LIMIT 10
+  `).all(userId, hours);
+
+  const timeline = getDb().prepare(`
+    SELECT created_at as time, ip, ua
+    FROM sub_access_log
+    WHERE user_id = ? AND created_at > datetime('now', '-' || ? || ' hours')
+    ORDER BY created_at DESC LIMIT 20
+  `).all(userId, hours);
+
+  return { ips, uas, timeline };
+}
+
+// ========== AI 运营日记 ==========
+
+function addDiaryEntry(content, mood = '🐱', category = 'ops') {
+  return getDb().prepare(
+    'INSERT INTO ops_diary (content, mood, category) VALUES (?, ?, ?)'
+  ).run(content, mood, category);
+}
+
+function getDiaryEntries(limit = 50, offset = 0) {
+  const total = getDb().prepare('SELECT COUNT(*) as c FROM ops_diary').get().c;
+  const rows = getDb().prepare(
+    'SELECT * FROM ops_diary ORDER BY created_at DESC LIMIT ? OFFSET ?'
+  ).all(limit, offset);
+  return { rows, total, pages: Math.ceil(total / limit) };
+}
+
+function getDiaryStats() {
+  const total = getDb().prepare('SELECT COUNT(*) as c FROM ops_diary').get().c;
+  const firstEntry = getDb().prepare('SELECT created_at FROM ops_diary ORDER BY created_at ASC LIMIT 1').get();
+  const todayCount = getDb().prepare(
+    "SELECT COUNT(*) as c FROM ops_diary WHERE date(created_at) = date('now')"
+  ).get().c;
+  return { total, todayCount, firstEntry: firstEntry?.created_at || null };
+}
+
 module.exports = {
   getDb, findOrCreateUser, getUserBySubToken, getUserById, getUserCount, getAllUsers,
-  blockUser, resetSubToken,
+  blockUser, setUserTrafficLimit, isTrafficExceeded, freezeUser, unfreezeUser, autoFreezeInactiveUsers, resetSubToken,
   isInWhitelist, getWhitelist, addToWhitelist, removeFromWhitelist,
+  isInRegisterWhitelist, getRegisterWhitelist, addToRegisterWhitelist, removeFromRegisterWhitelist,
   getAllNodes, getNodeById, addNode, updateNode, deleteNode, updateNodeAfterRotation,
   getUserNodeUuid, getUserAllNodeUuids, getNodeAllUserUuids,
   ensureAllUsersHaveUuid, ensureUserHasAllNodeUuids, rotateAllUserNodeUuids, rotateUserNodeUuidsByNodeIds,
-  recordTraffic, getUserTraffic, getAllUsersTraffic, getNodeTraffic, getGlobalTraffic,
+  recordTraffic, getUserTraffic, getAllUsersTraffic, getNodeTraffic, getGlobalTraffic, getTodayTraffic, getUsersTrafficByRange, getNodesTrafficByRange,
   addAuditLog, getAuditLogs, clearAuditLogs,
   getSetting, setSetting,
   getAwsAccounts, getAwsAccountById, addAwsAccount, updateAwsAccount, deleteAwsAccount,
   getAllAiProviders, getEnabledAiProviders, getAiProviderById, addAiProvider, updateAiProvider, deleteAiProvider,
   addAiChat, getAiChatHistory, clearAiChatHistory,
   createAiSession, getAiSessions, getAiSessionById, updateAiSessionTitle, deleteAiSession,
-  logSubAccess, getSubAccessIPs, getSubAbuseUsers,
-  addDiagnosis, updateDiagnosis, getDiagnosis, getAllDiagnoses, clearDiagnoses
+  logSubAccess, getSubAccessIPs, getSubAbuseUsers, getSubAccessStats, getSubAccessUserDetail,
+  addDiagnosis, updateDiagnosis, getDiagnosis, getAllDiagnoses, clearDiagnoses,
+  addDiaryEntry, getDiaryEntries, getDiaryStats
 };
