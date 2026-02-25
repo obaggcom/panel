@@ -36,6 +36,8 @@ VLESS 代理面板，支持多节点管理、AWS 云集成、AI 无人值守运�
 - **定时上报** — Xray 状态、按用户流量统计、中国可达性、系统负载
 - **远程指令** — ping、restart_xray、update_config、exec、self_update
 - **自愈机制** — Xray 自动重启 + 断线重连 + Watchdog 兜底
+- **TLS 严格校验** — 默认校验服务端证书，可通过 `AGENT_INSECURE_TLS=true` 临时放宽（仅调试用）
+- **exec 白名单** — 默认仅允许安全命令前缀，支持通过 config 追加自定义白名单
 
 ### 🧠 AI 运维（OpenClaw 集成）
 - **无人值守** — 本机 OpenClaw 直接操作 sqlite3/pm2/ssh，无中间层

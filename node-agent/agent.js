@@ -26,6 +26,40 @@ let config = loadConfig();
 const REPORT_INTERVAL = config.reportInterval || 60_000;
 const HEARTBEAT_INTERVAL = 30_000;
 const SELF_HEAL_INTERVAL = config.selfHealInterval || 60_000;
+
+// ─── TLS 配置 ───
+const INSECURE_TLS = config.insecureTls === true || process.env.AGENT_INSECURE_TLS === 'true';
+if (INSECURE_TLS) {
+  log('WARN', '⚠️  TLS 证书校验已禁用 (insecureTls=true)，存在中间人攻击风险，仅限调试使用！');
+}
+
+// ─── exec 指令白名单 ───
+const DEFAULT_EXEC_WHITELIST = [
+  'systemctl restart xray',
+  'systemctl stop xray',
+  'systemctl start xray',
+  'systemctl status xray',
+  'systemctl is-active xray',
+  'xray api',
+  'df ',
+  'free ',
+  'uptime',
+  'cat /usr/local/etc/xray/config.json',
+  'ls ',
+  'ps ',
+  'top -bn1',
+  'ip addr',
+  'ip route',
+  'ping ',
+  'curl ',
+  'wget ',
+];
+const EXEC_WHITELIST = [
+  ...DEFAULT_EXEC_WHITELIST,
+  ...(config.execWhitelist || []),
+  ...(process.env.AGENT_EXEC_WHITELIST ? process.env.AGENT_EXEC_WHITELIST.split(',') : []),
+];
+const EXEC_WHITELIST_ENABLED = config.execWhitelistEnabled !== false && process.env.AGENT_EXEC_WHITELIST_DISABLED !== 'true';
 let ws = null;
 let reconnectDelay = 1000;
 let heartbeatTimer = null;
@@ -217,6 +251,16 @@ async function handleCommand(msg) {
 
     case 'exec': {
       if (!msg.command) { reply({ success: false, error: '缺少 command 字段' }); break; }
+      // 白名单校验
+      if (EXEC_WHITELIST_ENABLED) {
+        const cmd = msg.command.trim();
+        const allowed = EXEC_WHITELIST.some(prefix => cmd.startsWith(prefix));
+        if (!allowed) {
+          log('WARN', `⚠️  exec 指令被白名单拒绝: ${cmd}`);
+          reply({ success: false, error: `指令不在白名单中: ${cmd.slice(0, 80)}` });
+          break;
+        }
+      }
       const timeout = Math.min(msg.timeout || 30000, 120000);
       const result = await run(msg.command, timeout);
       reply({ success: result.ok, stdout: result.stdout, stderr: result.stderr, code: result.code });
@@ -252,7 +296,7 @@ function httpGet(urlStr) {
   return new Promise((resolve, reject) => {
     const url = new URL(urlStr);
     const mod = url.protocol === 'https:' ? https : http;
-    const req = mod.get(url, { headers: { Authorization: `Bearer ${config.token}` }, timeout: 30000 }, (res) => {
+    const req = mod.get(url, { headers: { Authorization: `Bearer ${config.token}` }, timeout: 30000, rejectUnauthorized: !INSECURE_TLS }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         return httpGet(res.headers.location).then(resolve, reject);
       }
@@ -333,7 +377,7 @@ function createRawWs(urlStr) {
   const emitter = new EventEmitter();
   emitter.readyState = 0; // CONNECTING
 
-  const socket = mod.connect({ host: url.hostname, port, servername: url.hostname, rejectUnauthorized: false }, () => {
+  const socket = mod.connect({ host: url.hostname, port, servername: url.hostname, rejectUnauthorized: !INSECURE_TLS }, () => {
     const headers = [
       `GET ${pathStr} HTTP/1.1`,
       `Host: ${url.hostname}`,
