@@ -7,6 +7,7 @@ const { subLimiter } = require('../middleware/rateLimit');
 const QRCode = require('qrcode');
 const { notify } = require('../services/notify');
 const { getOnlineCache } = require('../services/health');
+const { escapeHtml } = require('../utils/escapeHtml');
 
 // 模块级缓存（替代 global 变量）
 const _abuseCache = new Map();
@@ -180,8 +181,8 @@ router.get('/api/peach-status', requireAuth, (req, res) => {
       nodesOnline: onlineCount,
       nodesTotal: totalActive,
       recentEvents: recentEvents.map(e => ({
-        action: e.action,
-        detail: (e.detail || '').slice(0, 80),
+        action: escapeHtml(e.action),
+        detail: escapeHtml((e.detail || '').slice(0, 80)),
         time: (e.created_at || '').replace('T', ' ').slice(0, 16)
       }))
     });

@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../../services/database');
 const { notify } = require('../../services/notify');
 const { parseIntId } = require('../adminApi');
+const { escapeHtml } = require('../../utils/escapeHtml');
 
 const router = express.Router();
 
@@ -11,7 +12,17 @@ router.get('/logs', (req, res) => {
   const type = req.query.type || 'all';
   const limit = 50;
   const offset = (page - 1) * limit;
-  res.json(db.getAuditLogs(limit, offset, type));
+  const data = db.getAuditLogs(limit, offset, type);
+  // 服务端转义 detail/action 防注入
+  if (data.rows) {
+    data.rows = data.rows.map(r => ({
+      ...r,
+      action: escapeHtml(r.action),
+      detail: escapeHtml(r.detail),
+      username: escapeHtml(r.username),
+    }));
+  }
+  res.json(data);
 });
 
 router.post('/logs/clear', (req, res) => {
@@ -154,11 +165,11 @@ router.get('/ops-events', (req, res) => {
   `).all(limit);
   // 合并并按时间排序
   const merged = [
-    ...auditEvents.map(e => ({ ...e, type: 'event' })),
+    ...auditEvents.map(e => ({ ...e, action: escapeHtml(e.action), detail: escapeHtml(e.detail), type: 'event' })),
     ...diagEvents.map(e => ({
       id: 'diag-' + e.id,
       action: 'diagnosis_' + e.status,
-      detail: `${e.node_name || '未知节点'}: ${e.diag_info || ''}${e.ai_analysis ? ' → ' + e.ai_analysis : ''}`,
+      detail: escapeHtml(`${e.node_name || '未知节点'}: ${e.diag_info || ''}${e.ai_analysis ? ' → ' + e.ai_analysis : ''}`),
       created_at: e.created_at,
       source: 'diagnosis',
       type: 'diagnosis'

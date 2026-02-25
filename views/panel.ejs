@@ -257,6 +257,7 @@
   <!-- 蜜桃酱数据加载 -->
   <script nonce="<%= nonce %>">
   (function(){
+    function esc(s){if(s==null)return '';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
     const icons = {health_check:'💓',auto_swap_ip:'🔄',swap_ip:'🔄',ip_rotated:'🔄',node_recovered:'✅',auto_repair:'🔧',deploy:'🚀',node_blocked:'🚫',node_xray_down:'🔴'};
     async function loadPeach() {
       try {
@@ -278,8 +279,8 @@
           evDiv.innerHTML = d.recentEvents.map(e =>
             '<div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.03)">' +
             '<span style="font-size:12px">' + (icons[e.action]||'📋') + '</span>' +
-            '<div style="flex:1;min-width:0"><p style="color:#d1d5db;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (e.detail||e.action) + '</p>' +
-            '<p style="color:#6b7280;font-size:9px">' + e.time + '</p></div></div>'
+            '<div style="flex:1;min-width:0"><p style="color:#d1d5db;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(e.detail||e.action) + '</p>' +
+            '<p style="color:#6b7280;font-size:9px">' + esc(e.time) + '</p></div></div>'
           ).join('');
         } else {
           evDiv.innerHTML = '<p style="color:#6b7280;font-size:11px;text-align:center;padding:8px 0">暂无运维事件</p>';

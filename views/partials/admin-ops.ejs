@@ -211,10 +211,10 @@
             <span class="text-lg flex-shrink-0">${ei.icon}</span>
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-2">
-                <span class="${ei.color} text-xs font-medium">${e.action}</span>
-                <span class="text-gray-600 text-[10px]">${time}</span>
+                <span class="${ei.color} text-xs font-medium">${escapeHtml(e.action)}</span>
+                <span class="text-gray-600 text-[10px]">${escapeHtml(time)}</span>
               </div>
-              <p class="text-gray-500 text-[11px] truncate mt-0.5">${e.detail || ''}</p>
+              <p class="text-gray-500 text-[11px] truncate mt-0.5">${escapeHtml(e.detail || '')}</p>
             </div>
           </div>`;
         }).join('');
