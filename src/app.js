@@ -75,7 +75,7 @@ app.set('trust proxy', 1);
 // Session（持久化到 SQLite）
 app.use(session({
   store: new SqliteStore({ client: getDb(), expired: { clear: true, intervalMs: 3600000 } }),
-  secret: process.env.SESSION_SECRET || 'dev-secret-change-me',
+  secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
   cookie: {
