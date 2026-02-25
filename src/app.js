@@ -1,5 +1,9 @@
 require('dotenv').config();
 
+// O9: 启动时 .env 校验（必须在其他模块加载前）
+const { validateEnv } = require('./services/env-check');
+validateEnv();
+
 const express = require('express');
 const session = require('express-session');
 const SqliteStore = require('better-sqlite3-session-store')(session);
@@ -7,6 +11,8 @@ const morgan = require('morgan');
 const helmet = require('helmet');
 const cron = require('node-cron');
 const path = require('path');
+const logger = require('./services/logger');
+const { performBackup } = require('./services/backup');
 
 const { setupAuth } = require('./middleware/auth');
 const authRoutes = require('./routes/auth');
@@ -67,6 +73,18 @@ app.use('/admin/api', adminLimiter, csrfProtection, adminApiRoutes);
 app.use('/admin', adminRoutes);
 app.use('/', panelRoutes);
 
+// O2: 健康检查端点
+app.get('/healthz', (req, res) => {
+  try {
+    const d = getDb();
+    d.prepare('SELECT 1').get();
+    res.json({ status: 'ok', uptime: process.uptime(), timestamp: new Date().toISOString() });
+  } catch (err) {
+    logger.error({ err }, '健康检查失败');
+    res.status(503).json({ status: 'error', error: 'database unreachable' });
+  }
+});
+
 // 404
 app.use((req, res) => {
   res.status(404).send(`
@@ -86,7 +104,7 @@ app.use((req, res) => {
 
 // 全局错误处理
 app.use((err, req, res, next) => {
-  console.error('[错误]', err.stack || err);
+  logger.error({ err, path: req.path }, '请求处理错误');
   const isApi = req.path.startsWith('/admin/api') || req.headers.accept?.includes('json');
   if (isApi) return res.status(500).json({ error: '服务器内部错误' });
   res.status(500).send(`
@@ -107,12 +125,12 @@ app.use((err, req, res, next) => {
 
 // 定时轮换任务（默认每天凌晨 3 点）
 cron.schedule('0 3 * * *', async () => {
-  console.log('[CRON] 开始自动轮换...');
+  logger.info('[CRON] 开始自动轮换...');
   try {
     await rotateService.rotateAll();
-    console.log('[CRON] 轮换完成');
+    logger.info('[CRON] 轮换完成');
   } catch (err) {
-    console.error('[CRON] 轮换失败:', err);
+    logger.error({ err }, '[CRON] 轮换失败');
   }
 }, { timezone: 'Asia/Shanghai' });
 
@@ -123,32 +141,83 @@ cron.schedule('0 4 * * *', async () => {
     const d = db.getDb();
     const r1 = d.prepare("DELETE FROM ai_chats WHERE created_at < datetime('now', '-30 days')").run();
     const r2 = d.prepare("DELETE FROM ai_sessions WHERE updated_at < datetime('now', '-30 days')").run();
-    const r3 = d.prepare("DELETE FROM audit_logs WHERE created_at < datetime('now', '-90 days')").run();
-    console.log(`[清理] 聊天:${r1.changes} 会话:${r2.changes} 日志:${r3.changes}`);
+    const r3 = d.prepare("DELETE FROM audit_log WHERE created_at < datetime('now', '-90 days')").run();
+    logger.info({ chat: r1.changes, session: r2.changes, audit: r3.changes }, '定时清理完成');
 
     // 自动冻结 15 天未登录的用户
     const frozen = db.autoFreezeInactiveUsers(15);
     if (frozen.length > 0) {
-      console.log(`[冻结] 已冻结 ${frozen.length} 个不活跃用户: ${frozen.map(u => u.username).join(', ')}`);
+      logger.info({ count: frozen.length, users: frozen.map(u => u.username) }, '自动冻结不活跃用户');
       db.addAuditLog(null, 'auto_freeze', `自动冻结 ${frozen.length} 个用户: ${frozen.map(u => u.username).join(', ')}`, 'system');
       // 同步节点配置，移除冻结用户的 UUID
       const { syncAllNodesConfig } = require('./services/deploy');
       await syncAllNodesConfig(db);
     }
-  } catch (err) { console.error('[清理/冻结] 失败:', err); }
+  } catch (err) { logger.error({ err }, '清理/冻结失败'); }
 }, { timezone: 'Asia/Shanghai' });
 
 // 启动
 const server = app.listen(PORT, () => {
-  console.log(`🚀 VLESS 节点面板已启动: http://localhost:${PORT}`);
-  console.log(`📋 环境: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🔒 白名单: ${process.env.WHITELIST_ENABLED === 'true' ? '开启' : '关闭'}`);
+  logger.info({ port: PORT, env: process.env.NODE_ENV || 'development', whitelist: process.env.WHITELIST_ENABLED === 'true' }, '🚀 VLESS 节点面板已启动');
   // 记录面板启动
   const db = require('./services/database');
   db.addAuditLog(null, 'panel_start', `面板启动 端口:${PORT} 环境:${process.env.NODE_ENV || 'development'}`, 'system');
+
+  // O7: 启动时清理过期审计日志
+  cleanAuditLogs();
+
+  // O4: 启动时创建备份目录并执行首次备份
+  const { BACKUP_DIR } = require('./services/backup');
+  require('fs').mkdirSync(BACKUP_DIR, { recursive: true });
 });
 
 // 初始化 WebSocket Agent 服务
-require('./services/agent-ws').init(server);
+const agentWs = require('./services/agent-ws');
+agentWs.init(server);
+
+// O4: 每天凌晨 2 点自动备份数据库
+cron.schedule('0 2 * * *', () => {
+  performBackup(getDb());
+}, { timezone: 'Asia/Shanghai' });
+
+// O7: 每天凌晨 4:30 清理过期审计日志和订阅访问日志（保留90天）
+function cleanAuditLogs() {
+  try {
+    const d = getDb();
+    const r1 = d.prepare("DELETE FROM audit_log WHERE created_at < datetime('now', '-90 days')").run();
+    // sub_access_log 表可能不存在
+    let r2 = { changes: 0 };
+    try {
+      r2 = d.prepare("DELETE FROM sub_access_log WHERE created_at < datetime('now', '-90 days')").run();
+    } catch (_) {}
+    logger.info({ audit_log: r1.changes, sub_access_log: r2.changes }, '审计日志清理完成');
+  } catch (err) {
+    logger.error({ err }, '审计日志清理失败');
+  }
+}
+cron.schedule('30 4 * * *', cleanAuditLogs, { timezone: 'Asia/Shanghai' });
+
+// O3: Graceful Shutdown
+function gracefulShutdown(signal) {
+  logger.info({ signal }, '收到关闭信号，开始优雅关闭...');
+  server.close(() => {
+    logger.info('HTTP 服务器已关闭');
+    // 关闭 WebSocket
+    try { agentWs.shutdown(); } catch (_) {}
+    // 关闭数据库
+    try {
+      getDb().close();
+      logger.info('数据库连接已关闭');
+    } catch (_) {}
+    process.exit(0);
+  });
+  // 5秒超时强制退出
+  setTimeout(() => {
+    logger.warn('优雅关闭超时，强制退出');
+    process.exit(1);
+  }, 5000);
+}
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
 module.exports = app;
