@@ -42,7 +42,13 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", (req, res) => `'nonce-${res.locals.nonce}'`],
+      scriptSrc: [
+        "'self'",
+        (req, res) => `'nonce-${res.locals.nonce}'`,
+        // 临时兼容：当前模板大量使用 onclick 内联事件，若移除此项会导致按钮点击失效
+        // 后续在全面迁移为 addEventListener 后再去掉 unsafe-inline
+        "'unsafe-inline'",
+      ],
       styleSrc: [
         "'self'",
         // TODO(S14-迁移计划): 将内联 style 迁移到外部 CSS 文件后移除 unsafe-inline
