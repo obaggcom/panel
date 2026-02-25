@@ -34,7 +34,7 @@
     <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
       <div class="glass rounded-2xl p-4 stat-card" style="--accent-color:#f43f5e">
         <p class="text-gray-500 text-xs mb-1">节点在线用户</p>
-        <p class="text-rose-400 text-lg font-bold" id="online-count">-</p>
+        <p class="text-rose-400 text-lg font-bold" id="online-count">0 人</p>
       </div>
       <div class="glass rounded-2xl p-4 stat-card" style="--accent-color:#8b5cf6">
         <p class="text-gray-500 text-xs mb-1">全站已用</p>
@@ -193,7 +193,7 @@
     // 加载在线人数
     fetch('/online-count').then(r=>r.json()).then(d=>{
       const el = document.getElementById('online-count');
-      if (el) el.textContent = d.online + ' 人';
+      if (el) el.textContent = (typeof d.online === 'number') ? d.online + ' 人' : '0 人';
     }).catch(()=>{});
 
     // 订阅重置倒计时
