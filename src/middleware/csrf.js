@@ -8,14 +8,50 @@ function generateToken(req) {
   return req.session.csrfToken;
 }
 
-// 验证 CSRF token（POST 请求）
+// 检查 Origin/Referer 是否匹配当前主机
+function isOriginAllowed(req) {
+  const origin = req.headers['origin'];
+  const referer = req.headers['referer'];
+  const host = req.headers['host'];
+  if (!host) return false;
+
+  // 优先检查 Origin
+  if (origin) {
+    try {
+      const url = new URL(origin);
+      return url.host === host;
+    } catch {
+      return false;
+    }
+  }
+
+  // 回退到 Referer
+  if (referer) {
+    try {
+      const url = new URL(referer);
+      return url.host === host;
+    } catch {
+      return false;
+    }
+  }
+
+  // 都没有则拒绝
+  return false;
+}
+
+// 验证 CSRF（POST/PUT/DELETE 请求）
 function csrfProtection(req, res, next) {
   if (req.method !== 'POST' && req.method !== 'PUT' && req.method !== 'DELETE') return next();
 
-  // JSON API 用 Content-Type 检查（浏览器跨站表单无法发 JSON）
-  if (req.is('json')) return next();
+  // JSON API：检查 Origin/Referer（浏览器跨站 fetch 会带 Origin）
+  if (req.is('json')) {
+    if (!isOriginAllowed(req)) {
+      return res.status(403).json({ error: 'CSRF 校验失败：Origin 不匹配' });
+    }
+    return next();
+  }
 
-  // 表单提交检查 token
+  // 表单提交：检查 CSRF token
   const token = req.body._csrf || req.headers['x-csrf-token'];
   if (!token || token !== req.session.csrfToken) {
     return res.status(403).json({ error: 'CSRF token 无效，请刷新页面重试' });
