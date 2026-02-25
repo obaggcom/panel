@@ -139,9 +139,37 @@ function getTrafficTrend(days = 30) {
   `).all(startDate);
 }
 
+// Sprint 6: 用户按天/按节点的流量明细
+function getUserTrafficDaily(userId, days = 30) {
+  const d = new Date(); d.setDate(d.getDate() - days + 1);
+  const startDate = d.toISOString().slice(0, 10);
+  return _getDb().prepare(`
+    SELECT td.date, td.node_id, n.name as node_name,
+      td.uplink, td.downlink
+    FROM traffic_daily td
+    LEFT JOIN nodes n ON n.id = td.node_id
+    WHERE td.user_id = ? AND td.date >= ?
+    ORDER BY td.date DESC, n.name
+  `).all(userId, startDate);
+}
+
+function getUserTrafficDailyAgg(userId, days = 30) {
+  const d = new Date(); d.setDate(d.getDate() - days + 1);
+  const startDate = d.toISOString().slice(0, 10);
+  return _getDb().prepare(`
+    SELECT date,
+      COALESCE(SUM(uplink), 0) as total_up,
+      COALESCE(SUM(downlink), 0) as total_down
+    FROM traffic_daily
+    WHERE user_id = ? AND date >= ?
+    GROUP BY date
+    ORDER BY date ASC
+  `).all(userId, startDate);
+}
+
 module.exports = {
   init,
   recordTraffic, getUserTraffic, getAllUsersTraffic, getNodeTraffic,
   getGlobalTraffic, getTodayTraffic, getUsersTrafficByRange, getNodesTrafficByRange,
-  getTrafficTrend
+  getTrafficTrend, getUserTrafficDaily, getUserTrafficDailyAgg
 };

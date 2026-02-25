@@ -140,4 +140,19 @@ router.post('/nodes/:id/restart-xray', async (req, res) => {
   res.json(result);
 });
 
+// Sprint 6: 更新节点分组/标签
+router.post('/nodes/:id/update-group', (req, res) => {
+  const id = parseIntId(req.params.id);
+  if (!id) return res.status(400).json({ error: '参数错误' });
+  const node = db.getNodeById(id);
+  if (!node) return res.status(404).json({ error: '节点不存在' });
+  const { group_name, tags } = req.body;
+  db.updateNode(id, {
+    group_name: (group_name || '').trim(),
+    tags: (tags || '').trim()
+  });
+  db.addAuditLog(req.user.id, 'node_update_group', `${node.name} 分组: ${group_name || '无'}, 标签: ${tags || '无'}`, req.ip);
+  res.json({ ok: true });
+});
+
 module.exports = router;

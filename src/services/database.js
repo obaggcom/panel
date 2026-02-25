@@ -391,6 +391,21 @@ function initTables() {
   if (!chatCols.includes('provider_id')) {
     db.exec("ALTER TABLE ai_chats ADD COLUMN provider_id INTEGER");
   }
+
+  // Sprint 6 迁移：节点分组/标签
+  const nodeCols2 = db.prepare("PRAGMA table_info(nodes)").all().map(c => c.name);
+  if (!nodeCols2.includes('group_name')) {
+    try { db.exec("ALTER TABLE nodes ADD COLUMN group_name TEXT DEFAULT ''"); } catch(_){}
+  }
+  if (!nodeCols2.includes('tags')) {
+    try { db.exec("ALTER TABLE nodes ADD COLUMN tags TEXT DEFAULT ''"); } catch(_){}
+  }
+
+  // Sprint 6 迁移：用户到期时间
+  const userCols2 = db.prepare("PRAGMA table_info(users)").all().map(c => c.name);
+  if (!userCols2.includes('expires_at')) {
+    try { db.exec("ALTER TABLE users ADD COLUMN expires_at TEXT"); } catch(_){}
+  }
 }
 
 // 导出所有函数（向后兼容）
@@ -410,6 +425,8 @@ module.exports = {
   unfreezeUser: (...a) => userRepo.unfreezeUser(...a),
   autoFreezeInactiveUsers: (...a) => userRepo.autoFreezeInactiveUsers(...a),
   resetSubToken: (...a) => userRepo.resetSubToken(...a),
+  setUserExpiry: (...a) => userRepo.setUserExpiry(...a),
+  autoFreezeExpiredUsers: (...a) => userRepo.autoFreezeExpiredUsers(...a),
   // 节点
   getAllNodes: (...a) => nodeRepo.getAllNodes(...a),
   getNodeById: (...a) => nodeRepo.getNodeById(...a),
@@ -435,6 +452,8 @@ module.exports = {
   getUsersTrafficByRange: (...a) => trafficRepo.getUsersTrafficByRange(...a),
   getNodesTrafficByRange: (...a) => trafficRepo.getNodesTrafficByRange(...a),
   getTrafficTrend: (...a) => trafficRepo.getTrafficTrend(...a),
+  getUserTrafficDaily: (...a) => trafficRepo.getUserTrafficDaily(...a),
+  getUserTrafficDailyAgg: (...a) => trafficRepo.getUserTrafficDailyAgg(...a),
   // 设置 & 审计 & 白名单
   addAuditLog: (...a) => settingsRepo.addAuditLog(...a),
   getAuditLogs: (...a) => settingsRepo.getAuditLogs(...a),

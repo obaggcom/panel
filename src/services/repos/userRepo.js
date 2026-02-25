@@ -126,9 +126,26 @@ function resetSubToken(userId) {
   return newToken;
 }
 
+// Sprint 6: 用户到期时间
+function setUserExpiry(userId, expiresAt) {
+  _getDb().prepare('UPDATE users SET expires_at = ? WHERE id = ?').run(expiresAt || null, userId);
+}
+
+function autoFreezeExpiredUsers() {
+  const now = new Date().toISOString();
+  const users = _getDb().prepare(
+    "SELECT id, username FROM users WHERE is_frozen = 0 AND is_blocked = 0 AND expires_at IS NOT NULL AND expires_at < ?"
+  ).all(now);
+  for (const u of users) {
+    freezeUser(u.id);
+  }
+  return users;
+}
+
 module.exports = {
   init,
   findOrCreateUser, getUserBySubToken, getUserById, getUserCount,
   getAllUsers, getAllUsersPaged, blockUser, setUserTrafficLimit,
-  isTrafficExceeded, freezeUser, unfreezeUser, autoFreezeInactiveUsers, resetSubToken
+  isTrafficExceeded, freezeUser, unfreezeUser, autoFreezeInactiveUsers, resetSubToken,
+  setUserExpiry, autoFreezeExpiredUsers
 };

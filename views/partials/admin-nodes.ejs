@@ -15,7 +15,7 @@
         <thead class="text-gray-500 border-b border-white/5 text-xs">
           <tr>
             <th class="py-3 px-2 sm:px-4">名称</th><th class="py-3 px-2 sm:px-4">地址</th><th class="py-3 px-2 sm:px-4">端口</th>
-            <th class="py-3 px-2 sm:px-4">等级</th><th class="py-3 px-2 sm:px-4">状态</th><th class="py-3 px-4 hidden sm:table-cell">Agent</th><th class="py-3 px-4 hidden md:table-cell">最后检测</th><th class="py-3 px-2 sm:px-4">操作</th>
+            <th class="py-3 px-2 sm:px-4">等级</th><th class="py-3 px-2 sm:px-4">分组</th><th class="py-3 px-2 sm:px-4">状态</th><th class="py-3 px-4 hidden sm:table-cell">Agent</th><th class="py-3 px-4 hidden md:table-cell">最后检测</th><th class="py-3 px-2 sm:px-4">操作</th>
           </tr>
         </thead>
         <tbody class="text-gray-300">
@@ -40,6 +40,9 @@
                 <option value="<%= lv %>" <%= (n.min_level||0) === lv ? 'selected' : '' %>>Lv.<%= lv %></option>
                 <% } %>
               </select>
+            </td>
+            <td class="py-3 px-2 sm:px-4">
+              <span class="text-xs text-gray-400 cursor-pointer hover:text-white" onclick="editNodeGroup(<%= n.id %>, '<%= (n.group_name||'').replace(/'/g,"\\'") %>', '<%= (n.tags||'').replace(/'/g,"\\'") %>')"><%= n.group_name || '-' %></span>
             </td>
             <td class="py-3 px-2 sm:px-4" data-status-cell="<%= n.id %>">
               <div class="flex items-center gap-1.5">
@@ -176,6 +179,20 @@ async function restartXray(nodeId, btn) {
     btn.textContent = '❌';
   }
   setTimeout(() => { btn.textContent = origText; btn.disabled = false; }, 2000);
+}
+
+// 节点分组编辑
+async function editNodeGroup(nodeId, groupName, tags) {
+  const g = await _prompt('设置分组名称', { value: groupName, placeholder: '留空则归入默认组', hint: '如：亚洲、欧美、高速线路' });
+  if (g === null) return;
+  const t = await _prompt('设置标签（逗号分隔）', { value: tags, placeholder: '如：IPLC,高速', hint: '多个标签逗号分隔' });
+  if (t === null) return;
+  const res = await fetch('/admin/api/nodes/' + nodeId + '/update-group', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _csrf },
+    body: JSON.stringify({ group_name: g, tags: t })
+  });
+  if (res.ok) { toast('✅ 分组已更新'); setTimeout(() => location.reload(), 500); }
+  else toast('❌ 更新失败');
 }
 
 // 批量更新 Agent

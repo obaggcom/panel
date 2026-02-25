@@ -10,10 +10,10 @@
     <div class="overflow-x-auto">
       <table class="w-full text-sm text-left">
         <thead class="text-gray-500 border-b border-white/5 text-xs">
-          <tr><th class="py-3 px-4">用户</th><th class="py-3 px-4">ID</th><th class="py-3 px-4">等级</th><th class="py-3 px-4">已用/限额</th><th class="py-3 px-4">最后登录</th><th class="py-3 px-4">状态</th><th class="py-3 px-4">操作</th></tr>
+          <tr><th class="py-3 px-4">用户</th><th class="py-3 px-4">ID</th><th class="py-3 px-4">等级</th><th class="py-3 px-4">已用/限额</th><th class="py-3 px-4">到期</th><th class="py-3 px-4">最后登录</th><th class="py-3 px-4">状态</th><th class="py-3 px-4">操作</th></tr>
         </thead>
         <tbody class="text-gray-300" id="users-tbody">
-          <tr><td colspan="7" class="py-8 text-center text-gray-500">加载中...</td></tr>
+          <tr><td colspan="8" class="py-8 text-center text-gray-500">加载中...</td></tr>
         </tbody>
       </table>
     </div>
@@ -46,7 +46,7 @@
       document.getElementById('users-total-count').textContent = total;
 
       if (!data.rows || data.rows.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="py-8 text-center text-gray-500">无匹配用户</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="py-8 text-center text-gray-500">无匹配用户</td></tr>';
         document.getElementById('users-page-info').textContent = '';
         document.getElementById('users-pagination').innerHTML = '';
         return;
@@ -58,6 +58,8 @@
         const blockBtnClass = u.is_blocked ? 'text-emerald-400' : 'text-red-400';
         const blockBtnText = u.is_blocked ? '解封' : '封禁';
         const limitText = u.traffic_limit ? _fmtBytes(u.traffic_limit) : '∞';
+        const expiryText = u.expires_at ? u.expires_at.slice(0,10) : '永久';
+        const expiryClass = u.expires_at && new Date(u.expires_at) < new Date() ? 'text-red-400' : 'text-gray-400';
         return `<tr class="border-b border-white/5 hover:bg-white/[0.02]">
           <td class="py-3 px-4 flex items-center gap-2">
             <img src="${u.avatar_url || ''}" class="w-6 h-6 rounded-full ring-1 ring-white/10 bg-gray-800" onerror="this.style.display='none'">
@@ -69,6 +71,7 @@
           <td class="py-3 px-4 text-xs text-gray-400">
             ${_fmtBytes(u.total_traffic || 0)} / <span class="cursor-pointer text-cyan-400 hover:underline" onclick="setTrafficLimit(${u.id}, '${u.username}', ${u.traffic_limit || 0})">${limitText}</span>
           </td>
+          <td class="py-3 px-4 text-xs"><span class="cursor-pointer ${expiryClass} hover:underline" onclick="setExpiry(${u.id}, '${u.username}', '${u.expires_at || ''}')">${expiryText}</span></td>
           <td class="py-3 px-4 text-xs text-gray-500">${u.last_login || '-'}</td>
           <td class="py-3 px-4"><span class="text-[10px] px-2 py-0.5 rounded-full ${statusClass}">${statusText}</span></td>
           <td class="py-3 px-4 space-x-2">

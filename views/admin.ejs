@@ -28,6 +28,7 @@
       <button onclick="switchTab('ops')" class="tab-btn text-sm px-3 sm:px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="ops">🧠 AI运维</button>
       <button onclick="switchTab('diary')" class="tab-btn text-sm px-3 sm:px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="diary">📔 运营日记</button>
       <button onclick="switchTab('docs')" class="tab-btn text-sm px-3 sm:px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="docs">📖 使用说明</button>
+      <button onclick="switchTab('backup')" class="tab-btn text-sm px-3 sm:px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="backup">💾 备份</button>
     </div>
   </div>
 
@@ -38,6 +39,7 @@
     <%- include('partials/admin-ops') %>
     <%- include('partials/admin-diary') %>
     <%- include('partials/admin-docs') %>
+    <%- include('partials/admin-backup') %>
   </main>
 
   <style>
@@ -58,6 +60,7 @@
       if (name === 'abuse') loadSubStats(1);
       if (name === 'users') loadUsers(1);
       if (name === 'traffic') loadTraffic(1);
+      if (name === 'backup') loadBackups();
     }
     if (location.hash.slice(1)) switchTab(location.hash.slice(1));
     const _msg = new URLSearchParams(location.search).get('msg');
@@ -394,6 +397,18 @@
         body: JSON.stringify({ limit: limitGB })
       });
       if (res.ok) { showToast(limitTB > 0 ? `✅ 已设为 ${limitTB} TB` : '✅ 已设为无限'); setTimeout(() => location.reload(), 500); }
+      else showToast('❌ 设置失败');
+    }
+
+    async function setExpiry(userId, username, currentExpiry) {
+      const input = await _prompt(`设置 ${username} 的到期时间`, { value: currentExpiry ? currentExpiry.slice(0,10) : '', placeholder: 'YYYY-MM-DD（留空=永不过期）', hint: '格式：2025-12-31，留空则永不过期' });
+      if (input === null) return;
+      const expires_at = input.trim() ? input.trim() + 'T23:59:59Z' : '';
+      const res = await fetch('/admin/api/users/' + userId + '/set-expiry', {
+        method: 'POST', headers: {'Content-Type':'application/json', 'X-CSRF-Token': _csrf },
+        body: JSON.stringify({ expires_at })
+      });
+      if (res.ok) { showToast(input.trim() ? `✅ 已设为 ${input.trim()}` : '✅ 已设为永不过期'); loadUsers(); }
       else showToast('❌ 设置失败');
     }
 

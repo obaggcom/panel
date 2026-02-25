@@ -48,6 +48,13 @@
         <p class="text-gray-500 text-xs mb-1">剩余流量</p>
         <p class="text-cyan-400 text-lg font-bold"><%= trafficLimit > 0 ? formatBytes(Math.max(0, trafficLimit - traffic.total_up - traffic.total_down)) : '∞' %></p>
       </div>
+      <% if (expiresAt) { %>
+      <div class="glass rounded-2xl p-4 stat-card" style="--accent-color:#a78bfa">
+        <p class="text-gray-500 text-xs mb-1">账号到期</p>
+        <% const _daysLeft = Math.ceil((new Date(expiresAt).getTime() - Date.now()) / 86400000); %>
+        <p class="<%= _daysLeft <= 3 ? 'text-red-400' : 'text-violet-400' %> text-lg font-bold"><%= _daysLeft > 0 ? _daysLeft + ' 天' : '已过期' %></p>
+      </div>
+      <% } %>
     </div>
 
     <!-- 订阅链接 -->
@@ -82,38 +89,83 @@
       </div>
     </div>
 
-    <!-- 节点列表 -->
+    <!-- 节点列表（按分组展示） -->
     <div>
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-white font-semibold">🌐 可用节点</h2>
-        <span class="text-gray-600 text-xs"><%= userNodes.length %> 个节点</span>
+        <div class="flex items-center gap-2">
+          <button onclick="testLatency(this)" class="text-xs px-3 py-1.5 rounded-full glass text-gray-300 hover:text-white transition">⚡ 延迟测试</button>
+          <span class="text-gray-600 text-xs"><%= userNodes.length %> 个节点</span>
+        </div>
       </div>
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 node-card-grid">
-        <% if (userNodes.length === 0) { %>
+      <%
+        // 按 group_name 分组
+        const _groups = {};
+        userNodes.forEach(n => {
+          const g = n.group_name || '默认';
+          if (!_groups[g]) _groups[g] = [];
+          _groups[g].push(n);
+        });
+        const _groupNames = Object.keys(_groups).sort((a, b) => a === '默认' ? 1 : b === '默认' ? -1 : a.localeCompare(b));
+      %>
+      <% _groupNames.forEach(gName => { %>
+        <% if (_groupNames.length > 1) { %>
+        <h3 class="text-gray-400 text-sm font-medium mb-2 mt-4 flex items-center gap-1.5">
+          <span class="w-1 h-4 rounded-full bg-rose-500/50"></span> <%= gName %>
+          <span class="text-gray-600 text-xs">(<%= _groups[gName].length %>)</span>
+        </h3>
+        <% } %>
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 node-card-grid mb-3">
+        <% if (userNodes.length === 0 && gName === _groupNames[0]) { %>
           <div class="glass rounded-2xl p-8 col-span-full text-center">
             <p class="text-gray-500">暂无可用节点</p>
           </div>
-        <% } else { userNodes.forEach(function(n) { %>
+        <% } else { _groups[gName].forEach(function(n) { %>
           <div class="glass rounded-2xl p-4">
             <div class="flex items-center justify-between mb-2">
               <h3 class="text-white font-medium text-sm"><%= n.name %></h3>
-              <% if (n.remark && n.remark.includes('被墙')) { %>
-                <span class="inline-block w-2.5 h-2.5 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]" title="被墙"></span>
-              <% } else if (n.remark && n.remark.includes('离线')) { %>
-                <span class="inline-block w-2.5 h-2.5 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]" title="离线"></span>
-              <% } else if (n.is_active) { %>
-                <span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]" title="在线"></span>
-              <% } else { %>
-                <span class="inline-block w-2.5 h-2.5 rounded-full bg-yellow-400 shadow-[0_0_6px_rgba(250,204,21,0.6)]" title="检测中"></span>
-              <% } %>
+              <div class="flex items-center gap-1.5">
+                <span class="text-gray-600 text-[10px] latency-badge" id="latency-<%= n.id %>"></span>
+                <% if (n.remark && n.remark.includes('被墙')) { %>
+                  <span class="inline-block w-2.5 h-2.5 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]" title="被墙"></span>
+                <% } else if (n.remark && n.remark.includes('离线')) { %>
+                  <span class="inline-block w-2.5 h-2.5 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]" title="离线"></span>
+                <% } else if (n.is_active) { %>
+                  <span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]" title="在线"></span>
+                <% } else { %>
+                  <span class="inline-block w-2.5 h-2.5 rounded-full bg-yellow-400 shadow-[0_0_6px_rgba(250,204,21,0.6)]" title="检测中"></span>
+                <% } %>
+              </div>
             </div>
-            <% if (n.region) { %><p class="text-gray-500 text-xs mb-3"><%= n.region %></p><% } %>
+            <% if (n.region) { %><p class="text-gray-500 text-xs mb-3"><%= n.region %><% if (n.tags) { %> · <span class="text-gray-600"><%= n.tags %></span><% } %></p><% } %>
             <div class="bg-black/30 rounded-lg p-2.5 mb-2.5 overflow-hidden">
               <code class="text-rose-300 text-[11px] break-all select-all font-mono vless-link leading-relaxed block max-h-20 overflow-y-auto" id="link-<%= n.id %>"><%= n.link %></code>
             </div>
             <button onclick="copyLink(<%= n.id %>)" class="w-full bg-rose-600/80 hover:bg-rose-500 text-white text-xs py-2 rounded-lg transition">复制链接</button>
           </div>
         <% }); } %>
+      </div>
+      <% }); %>
+    </div>
+
+    <!-- 流量使用明细 -->
+    <div class="glass rounded-2xl p-5">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-white font-semibold text-sm">📊 流量使用明细</h2>
+        <select id="traffic-days" onchange="loadTrafficDetail()" class="bg-black/30 text-white text-xs px-3 py-1.5 rounded-lg border border-white/10">
+          <option value="7">最近 7 天</option>
+          <option value="30" selected>最近 30 天</option>
+          <option value="90">最近 90 天</option>
+        </select>
+      </div>
+      <canvas id="traffic-chart" height="160" class="mb-4"></canvas>
+      <div class="overflow-x-auto">
+        <table class="w-full text-xs text-left" id="traffic-detail-table">
+          <thead class="text-gray-500 border-b border-white/5">
+            <tr><th class="py-2 px-3">日期</th><th class="py-2 px-3">节点</th><th class="py-2 px-3">上传</th><th class="py-2 px-3">下载</th><th class="py-2 px-3">合计</th></tr>
+          </thead>
+          <tbody class="text-gray-300" id="traffic-detail-body"></tbody>
+        </table>
       </div>
     </div>
   </main>
@@ -170,5 +222,98 @@
     }
     tickResetCountdown();
     setInterval(tickResetCountdown, 30000);
+
+    // Sprint 6: 延迟测试
+    async function testLatency(btn) {
+      const orig = btn.textContent;
+      btn.textContent = '⏳ 测试中...';
+      btn.disabled = true;
+      try {
+        const r = await fetch('/api/ping-nodes');
+        const d = await r.json();
+        if (d.ok) {
+          d.results.forEach(n => {
+            const el = document.getElementById('latency-' + n.id);
+            if (el) {
+              if (n.latency >= 0) {
+                const color = n.latency < 100 ? 'text-emerald-400' : n.latency < 300 ? 'text-yellow-400' : 'text-red-400';
+                el.className = `text-[10px] latency-badge ${color}`;
+                el.textContent = n.latency + 'ms';
+              } else {
+                el.className = 'text-[10px] latency-badge text-red-400';
+                el.textContent = '超时';
+              }
+            }
+          });
+          toast('✅ 延迟测试完成');
+        }
+      } catch(e) { toast('❌ 测试失败'); }
+      btn.textContent = orig;
+      btn.disabled = false;
+    }
+
+    // Sprint 6: 流量明细
+    function fmtB(b) {
+      if (b < 1024) return b + ' B';
+      if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+      if (b < 1073741824) return (b/1048576).toFixed(2) + ' MB';
+      return (b/1073741824).toFixed(2) + ' GB';
+    }
+
+    let _chart = null;
+    async function loadTrafficDetail() {
+      const days = document.getElementById('traffic-days').value;
+      try {
+        const r = await fetch('/api/traffic-detail?days=' + days);
+        const d = await r.json();
+        if (!d.ok) return;
+        // 表格
+        const tbody = document.getElementById('traffic-detail-body');
+        tbody.innerHTML = d.detail.slice(0, 100).map(r =>
+          `<tr class="border-b border-white/5"><td class="py-1.5 px-3">${r.date}</td><td class="py-1.5 px-3">${r.node_name||'已删除'}</td><td class="py-1.5 px-3">${fmtB(r.uplink)}</td><td class="py-1.5 px-3">${fmtB(r.downlink)}</td><td class="py-1.5 px-3">${fmtB(r.uplink+r.downlink)}</td></tr>`
+        ).join('') || '<tr><td colspan="5" class="py-4 text-center text-gray-500">暂无数据</td></tr>';
+        // 图表
+        const canvas = document.getElementById('traffic-chart');
+        const ctx = canvas.getContext('2d');
+        if (_chart) { _chart = null; }
+        const trend = d.trend;
+        if (trend.length === 0) { ctx.clearRect(0,0,canvas.width,canvas.height); return; }
+        drawChart(ctx, canvas, trend);
+      } catch(e) {}
+    }
+
+    function drawChart(ctx, canvas, trend) {
+      const W = canvas.width = canvas.offsetWidth * 2;
+      const H = canvas.height = 320;
+      ctx.clearRect(0,0,W,H);
+      const pad = {t:20,r:20,b:40,l:60};
+      const cw = W-pad.l-pad.r, ch = H-pad.t-pad.b;
+      const maxVal = Math.max(...trend.map(t=>t.total_up+t.total_down), 1);
+      // 网格
+      ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+      for (let i=0;i<=4;i++) {
+        const y = pad.t + ch*(1-i/4);
+        ctx.beginPath(); ctx.moveTo(pad.l,y); ctx.lineTo(W-pad.r,y); ctx.stroke();
+        ctx.fillStyle='rgba(255,255,255,0.3)'; ctx.font='18px sans-serif'; ctx.textAlign='right';
+        ctx.fillText(fmtB(maxVal*i/4), pad.l-8, y+5);
+      }
+      // 柱状图
+      const bw = Math.max(2, cw/trend.length - 2);
+      trend.forEach((t,i) => {
+        const x = pad.l + (i+0.5)*cw/trend.length - bw/2;
+        const val = t.total_up+t.total_down;
+        const h = (val/maxVal)*ch;
+        const grad = ctx.createLinearGradient(0,pad.t+ch-h,0,pad.t+ch);
+        grad.addColorStop(0,'rgba(244,63,94,0.8)'); grad.addColorStop(1,'rgba(251,146,60,0.3)');
+        ctx.fillStyle=grad;
+        ctx.fillRect(x, pad.t+ch-h, bw, h);
+        if (trend.length <= 14) {
+          ctx.fillStyle='rgba(255,255,255,0.3)'; ctx.font='16px sans-serif'; ctx.textAlign='center';
+          ctx.save(); ctx.translate(x+bw/2, H-5); ctx.rotate(-0.5); ctx.fillText(t.date.slice(5),0,0); ctx.restore();
+        }
+      });
+    }
+
+    loadTrafficDetail();
   </script>
 <%- include('partials/foot') %>

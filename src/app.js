@@ -131,6 +131,14 @@ cron.schedule('0 4 * * *', async () => {
       // 同步节点配置，移除冻结用户的 UUID
       await deployService.syncAllNodesConfig(db);
     }
+
+    // Sprint 6: 自动冻结到期用户
+    const expired = db.autoFreezeExpiredUsers();
+    if (expired.length > 0) {
+      logger.info({ count: expired.length, users: expired.map(u => u.username) }, '自动冻结到期用户');
+      db.addAuditLog(null, 'auto_freeze_expired', `自动冻结 ${expired.length} 个到期用户: ${expired.map(u => u.username).join(', ')}`, 'system');
+      await deployService.syncAllNodesConfig(db);
+    }
   } catch (err) { logger.error({ err }, '清理/冻结失败'); }
 }, { timezone: 'Asia/Shanghai' });
 

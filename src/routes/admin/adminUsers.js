@@ -64,4 +64,16 @@ router.get('/users', (req, res) => {
   res.json({ ...data, page });
 });
 
+// Sprint 6: 设置用户到期时间
+router.post('/users/:id/set-expiry', (req, res) => {
+  const id = parseIntId(req.params.id);
+  if (!id) return res.status(400).json({ error: '参数错误' });
+  const user = db.getUserById(id);
+  if (!user) return res.status(404).json({ error: '用户不存在' });
+  const { expires_at } = req.body;
+  db.setUserExpiry(user.id, expires_at || null);
+  db.addAuditLog(req.user.id, 'set_expiry', `设置 ${user.username} 到期时间: ${expires_at || '永不过期'}`, req.ip);
+  res.json({ ok: true });
+});
+
 module.exports = router;

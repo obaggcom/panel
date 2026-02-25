@@ -100,6 +100,7 @@ router.get('/', requireAuth, (req, res) => {
     nextUuidResetAt: nextUuidResetAtMs(),
     nextSubResetAt: nextTokenResetAtMs(),
     announcement: db.getSetting('announcement') || '',
+    expiresAt: user.expires_at || null,
   });
 });
 
@@ -240,6 +241,48 @@ router.get('/online-count', requireAuth, (req, res) => {
     ? { ...summary, online: summary.online * 2 }
     : summary;
   res.json(display);
+});
+
+// Sprint 6: 用户流量使用明细 API
+router.get('/api/traffic-detail', requireAuth, (req, res) => {
+  const days = Math.min(parseInt(req.query.days) || 30, 90);
+  const detail = db.getUserTrafficDaily(req.user.id, days);
+  const trend = db.getUserTrafficDailyAgg(req.user.id, days);
+  res.json({ ok: true, detail, trend });
+});
+
+// Sprint 6: 节点延迟测试 API（TCP ping）
+router.get('/api/ping-nodes', requireAuth, (req, res) => {
+  const net = require('net');
+  const isVip = db.isInWhitelist(req.user.nodeloc_id);
+  const nodes = db.getAllNodes(true).filter(n => isVip || req.user.trust_level >= (n.min_level || 0));
+
+  const results = [];
+  let pending = nodes.length;
+  if (pending === 0) return res.json({ ok: true, results: [] });
+
+  nodes.forEach(n => {
+    const start = Date.now();
+    const sock = new net.Socket();
+    sock.setTimeout(5000);
+    sock.on('connect', () => {
+      const latency = Date.now() - start;
+      results.push({ id: n.id, name: n.name, region: n.region, latency, status: 'ok' });
+      sock.destroy();
+      if (--pending === 0) res.json({ ok: true, results });
+    });
+    sock.on('timeout', () => {
+      results.push({ id: n.id, name: n.name, region: n.region, latency: -1, status: 'timeout' });
+      sock.destroy();
+      if (--pending === 0) res.json({ ok: true, results });
+    });
+    sock.on('error', () => {
+      results.push({ id: n.id, name: n.name, region: n.region, latency: -1, status: 'error' });
+      sock.destroy();
+      if (--pending === 0) res.json({ ok: true, results });
+    });
+    sock.connect(n.port, n.host);
+  });
 });
 
 module.exports = router;
