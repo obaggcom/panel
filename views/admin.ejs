@@ -16,19 +16,39 @@
 
   <!-- Tab 导航 -->
   <div class="max-w-6xl mx-auto px-4 sm:px-6 pt-6">
-    <div class="flex gap-1 glass-solid rounded-2xl p-1.5 overflow-x-auto scrollbar-hide" style="-webkit-overflow-scrolling:touch">
-      <button onclick="switchTab('nodes')" class="tab-btn active text-sm px-3 sm:px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="nodes">🌐 节点</button>
-      <button onclick="switchTab('users')" class="tab-btn text-sm px-3 sm:px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="users">👥 用户</button>
-      <button onclick="switchTab('traffic')" class="tab-btn text-sm px-3 sm:px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="traffic">📊 流量</button>
-      <button onclick="switchTab('whitelist')" class="tab-btn text-sm px-3 sm:px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="whitelist">🔒 白名单</button>
-      <button onclick="switchTab('logs')" class="tab-btn text-sm px-3 sm:px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="logs">📋 日志</button>
-      <button onclick="switchTab('abuse')" class="tab-btn text-sm px-3 sm:px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="abuse">📈 订阅统计</button>
-      <button onclick="switchTab('notify')" class="tab-btn text-sm px-3 sm:px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="notify">🔔 通知</button>
-      <button onclick="switchTab('aws')" class="tab-btn text-sm px-3 sm:px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="aws">☁️ AWS</button>
-      <button onclick="switchTab('ops')" class="tab-btn text-sm px-3 sm:px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="ops">🧠 AI运维</button>
-      <button onclick="switchTab('diary')" class="tab-btn text-sm px-3 sm:px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="diary">📔 运营日记</button>
-      <button onclick="switchTab('docs')" class="tab-btn text-sm px-3 sm:px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="docs">📖 使用说明</button>
-      <button onclick="switchTab('backup')" class="tab-btn text-sm px-3 sm:px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="backup">💾 备份</button>
+    <div class="sm:hidden mb-2">
+      <label class="text-[11px] text-gray-500 block mb-1">快速切换功能</label>
+      <select id="tab-select" onchange="switchTab(this.value)" class="w-full bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+        <option value="nodes">🌐 节点</option>
+        <option value="users">👥 用户</option>
+        <option value="traffic">📊 流量</option>
+        <option value="whitelist">🔒 白名单</option>
+        <option value="logs">📋 日志</option>
+        <option value="abuse">📈 订阅统计</option>
+        <option value="notify">🔔 通知</option>
+        <option value="aws">☁️ AWS</option>
+        <option value="ops">🧠 运维</option>
+        <option value="diary">📔 运营日记</option>
+        <option value="docs">📖 使用说明</option>
+        <option value="backup">💾 备份</option>
+      </select>
+    </div>
+    <div class="relative">
+      <div class="flex gap-1 glass-solid rounded-2xl p-1.5 overflow-x-auto scrollbar-hide" style="-webkit-overflow-scrolling:touch">
+        <button onclick="switchTab('nodes')" class="tab-btn active text-sm px-3 sm:px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="nodes">🌐 节点</button>
+        <button onclick="switchTab('users')" class="tab-btn text-sm px-3 sm:px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="users">👥 用户</button>
+        <button onclick="switchTab('traffic')" class="tab-btn text-sm px-3 sm:px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="traffic">📊 流量</button>
+        <button onclick="switchTab('whitelist')" class="tab-btn text-sm px-3 sm:px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="whitelist">🔒 白名单</button>
+        <button onclick="switchTab('logs')" class="tab-btn text-sm px-3 sm:px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="logs">📋 日志</button>
+        <button onclick="switchTab('abuse')" class="tab-btn text-sm px-3 sm:px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="abuse">📈 订阅统计</button>
+        <button onclick="switchTab('notify')" class="tab-btn text-sm px-3 sm:px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="notify">🔔 通知</button>
+        <button onclick="switchTab('aws')" class="tab-btn text-sm px-3 sm:px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="aws">☁️ AWS</button>
+        <button onclick="switchTab('ops')" class="tab-btn text-sm px-3 sm:px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="ops">🧠 运维</button>
+        <button onclick="switchTab('diary')" class="tab-btn text-sm px-3 sm:px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="diary">📔 运营日记</button>
+        <button onclick="switchTab('docs')" class="tab-btn text-sm px-3 sm:px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="docs">📖 使用说明</button>
+        <button onclick="switchTab('backup')" class="tab-btn text-sm px-3 sm:px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="backup">💾 备份</button>
+      </div>
+      <div class="sm:hidden text-[10px] text-gray-600 mt-1 text-right">可左右滑动查看更多功能</div>
     </div>
   </div>
 
@@ -52,6 +72,8 @@
     function switchTab(name) {
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
       document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.dataset.tab === name));
+      const sel = document.getElementById('tab-select');
+      if (sel) sel.value = name;
       location.hash = name;
       if (name === 'aws') { loadAwsConfig(); }
       if (name === 'ops') { loadOpsConfig(); }
