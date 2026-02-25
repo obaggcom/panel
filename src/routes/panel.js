@@ -93,15 +93,101 @@ router.get('/', requireAuth, (req, res) => {
     return { ...n, link: buildVlessLink(n, userUuid.uuid) };
   });
 
+  // 查询节点 AI 操作标签
+  const nodeAiTags = {};
+  try {
+    const d = db.getDb();
+    const deployNodes = d.prepare("SELECT DISTINCT detail FROM audit_log WHERE action = 'deploy'").all();
+    deployNodes.forEach(r => {
+      // detail 格式通常含节点名
+      const match = (r.detail || '').match(/节点.*?[:：]\s*(.+)/);
+      if (match) nodeAiTags[match[1]] = nodeAiTags[match[1]] || [];
+    });
+    const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+    const swapNodes = d.prepare(`
+      SELECT DISTINCT detail FROM audit_log
+      WHERE action IN ('auto_swap_ip','swap_ip','ip_rotated') AND created_at > ?
+    `).all(sevenDaysAgo);
+    // 标记所有节点
+    nodes.forEach(n => {
+      const tags = [];
+      const swapMatch = swapNodes.some(r => (r.detail || '').includes(n.name) || (r.detail || '').includes(n.host));
+      if (swapMatch) tags.push('ai_swap');
+      if (tags.length) nodeAiTags[n.id] = tags;
+    });
+  } catch (_) {}
+
   res.render('panel', {
     user, userNodes, traffic, globalTraffic, formatBytes,
     trafficLimit: user.traffic_limit || 0,
+    nodeAiTags,
     subUrl: `${req.protocol}://${req.get('host')}/sub/${user.sub_token}`,
     nextUuidResetAt: nextUuidResetAtMs(),
     nextSubResetAt: nextTokenResetAtMs(),
     announcement: db.getSetting('announcement') || '',
     expiresAt: user.expires_at || null,
   });
+});
+
+// ========== 蜜桃酱 AI 运维状态 API ==========
+router.get('/api/peach-status', requireAuth, (req, res) => {
+  try {
+    const d = db.getDb();
+    const today = new Date().toISOString().slice(0, 10);
+
+    const todayStats = d.prepare(`
+      SELECT
+        COUNT(*) FILTER (WHERE action LIKE '%patrol%' OR action = 'health_check') as patrols,
+        COUNT(*) FILTER (WHERE action IN ('auto_swap_ip','swap_ip','ip_rotated')) as swaps,
+        COUNT(*) FILTER (WHERE action IN ('auto_repair','node_recovered')) as fixes
+      FROM audit_log WHERE date(created_at) = ?
+    `).get(today) || { patrols: 0, swaps: 0, fixes: 0 };
+
+    const totalStats = d.prepare(`
+      SELECT
+        COUNT(*) FILTER (WHERE action LIKE '%patrol%' OR action = 'health_check') as patrols,
+        COUNT(*) FILTER (WHERE action IN ('auto_swap_ip','swap_ip','ip_rotated')) as swaps,
+        COUNT(*) FILTER (WHERE action IN ('auto_repair','node_recovered')) as fixes
+      FROM audit_log
+    `).get() || { patrols: 0, swaps: 0, fixes: 0 };
+
+    const lastPatrol = db.getSetting('ops_last_patrol') || '';
+    const nodes = db.getAllNodes(true);
+    const onlineCount = nodes.filter(n => n.agent_last_report && (Date.now() - new Date(n.agent_last_report).getTime()) < 120000).length;
+    const totalActive = nodes.length;
+
+    // 最早审计记录算运行天数
+    const firstLog = d.prepare("SELECT created_at FROM audit_log ORDER BY created_at ASC LIMIT 1").get();
+    const uptimeDays = firstLog ? Math.max(1, Math.ceil((Date.now() - new Date(firstLog.created_at).getTime()) / 86400000)) : 1;
+
+    const recentEvents = d.prepare(`
+      SELECT action, detail, created_at FROM audit_log
+      WHERE action IN ('health_check','auto_swap_ip','swap_ip','ip_rotated','node_recovered','auto_repair','deploy','node_blocked','node_xray_down')
+      ORDER BY created_at DESC LIMIT 5
+    `).all();
+
+    res.json({
+      online: true,
+      lastPatrol,
+      todayPatrols: todayStats.patrols,
+      todaySwaps: todayStats.swaps,
+      todayFixes: todayStats.fixes,
+      totalPatrols: totalStats.patrols,
+      totalSwaps: totalStats.swaps,
+      totalFixes: totalStats.fixes,
+      uptimeDays,
+      nodeAvailability: totalActive > 0 ? Math.round(onlineCount / totalActive * 100) : 100,
+      nodesOnline: onlineCount,
+      nodesTotal: totalActive,
+      recentEvents: recentEvents.map(e => ({
+        action: e.action,
+        detail: (e.detail || '').slice(0, 80),
+        time: (e.created_at || '').replace('T', ' ').slice(0, 16)
+      }))
+    });
+  } catch (err) {
+    res.json({ online: false, error: err.message });
+  }
 });
 
 // 当前登录用户订阅二维码（便于手机扫码）
