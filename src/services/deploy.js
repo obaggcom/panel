@@ -330,14 +330,7 @@ async function deployNode(sshInfo, db) {
     await ssh.connect(connectOpts);
 
     // 先安装 xray
-    const installScript = `
-set -e
-apt-get update -qq && apt-get install -y -qq curl unzip jq > /dev/null 2>&1
-if ! command -v xray &> /dev/null; then
-  bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
-fi
-echo "INSTALL_OK"
-`.trim();
+    const installScript = fs.readFileSync(path.join(__dirname, '..', '..', 'templates', 'install-xray.sh'), 'utf8').trim();
 
     const installResult = await ssh.execCommand(installScript, { execOptions: { timeout: 180000 } });
     if (!installResult.stdout.includes('INSTALL_OK')) {
@@ -465,23 +458,8 @@ async function installAgentOnNode(ssh, nodeId, db) {
 
   // 创建 systemd service 并启动
   const nodeBin = (await ssh.execCommand('which node')).stdout.trim() || '/usr/bin/node';
-  const serviceContent = `[Unit]
-Description=VLESS Panel Node Agent
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-ExecStart=${nodeBin} /opt/vless-agent/agent.js
-Restart=always
-RestartSec=5
-Environment=NODE_ENV=production
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=vless-agent
-
-[Install]
-WantedBy=multi-user.target`;
+  const serviceTemplate = fs.readFileSync(path.join(__dirname, '..', '..', 'templates', 'vless-agent.service'), 'utf8');
+  const serviceContent = serviceTemplate.replace('{{NODE_BIN}}', nodeBin).trim();
 
   await sftpWriteFile(ssh, '/etc/systemd/system/vless-agent.service', serviceContent);
   await ssh.execCommand('systemctl daemon-reload && systemctl enable vless-agent && systemctl restart vless-agent');
