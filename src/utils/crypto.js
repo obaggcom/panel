@@ -1,7 +1,13 @@
 const crypto = require('crypto');
 
+// 启动时强制检查 SESSION_SECRET
+if (!process.env.SESSION_SECRET) {
+  console.error('[FATAL] 环境变量 SESSION_SECRET 未设置，拒绝启动。请在 .env 中配置一个强随机密钥。');
+  process.exit(1);
+}
+
 const ALGO = 'aes-256-gcm';
-const KEY = crypto.scryptSync(process.env.SESSION_SECRET || 'fallback-key', 'vless-panel-salt', 32);
+const KEY = crypto.scryptSync(process.env.SESSION_SECRET, 'vless-panel-salt', 32);
 
 function encrypt(text) {
   if (!text) return null;
