@@ -36,7 +36,7 @@
           <option value="aws">☁️ AWS</option>
           <option value="settings">⚙️ 设置</option>
           <option value="backup">💾 备份</option>
-          <option value="docs">📖 使用说明</option>
+          <!-- 说明已移至项目文档 -->
         </optgroup>
       </select>
     </div>
@@ -59,7 +59,7 @@
         <button onclick="switchTab('aws')" class="tab-btn text-sm px-3 sm:px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="aws">☁️ AWS</button>
         <button onclick="switchTab('settings')" class="tab-btn text-sm px-3 sm:px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="settings">⚙️ 设置</button>
         <button onclick="switchTab('backup')" class="tab-btn text-sm px-3 sm:px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="backup">💾 备份</button>
-        <button onclick="switchTab('docs')" class="tab-btn text-sm px-3 sm:px-4 py-2 rounded-xl transition whitespace-nowrap" data-tab="docs">📖 说明</button>
+        <!-- 说明 tab 已移除 -->
       </div>
       <div class="tab-fade-right pointer-events-none absolute right-0 top-0 bottom-0 w-12 rounded-r-2xl" style="background:linear-gradient(to right, transparent, rgba(15,11,30,0.95))"></div>
       <div class="sm:hidden text-[10px] text-gray-600 mt-1 text-right">可左右滑动查看更多功能</div>
@@ -72,7 +72,7 @@
     <%- include('partials/admin-traffic') %>
     <%- include('partials/admin-ops') %>
     <%- include('partials/admin-diary') %>
-    <%- include('partials/admin-docs') %>
+    <!-- 说明 tab 已移至项目文档 -->
     <%- include('partials/admin-backup') %>
   </main>
 
