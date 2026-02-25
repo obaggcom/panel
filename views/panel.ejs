@@ -158,7 +158,7 @@
     <!-- 流量使用明细 (已移除) -->
   </main>
 
-  <script>
+  <script nonce="<%= nonce %>">
     function copyLink(id) {
       navigator.clipboard.writeText(document.getElementById('link-' + id).textContent).then(() => toast('✅ 链接已复制'));
     }
@@ -252,10 +252,10 @@
     <p style="color:#4b5563;font-size:9px;text-align:center">最近巡检: <span id="pb-last">-</span></p>
   </div>
 
-  <style>@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}</style>
+  <style nonce="<%= nonce %>">@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}</style>
 
   <!-- 蜜桃酱数据加载 -->
-  <script>
+  <script nonce="<%= nonce %>">
   (function(){
     const icons = {health_check:'💓',auto_swap_ip:'🔄',swap_ip:'🔄',ip_rotated:'🔄',node_recovered:'✅',auto_repair:'🔧',deploy:'🚀',node_blocked:'🚫',node_xray_down:'🔴'};
     async function loadPeach() {

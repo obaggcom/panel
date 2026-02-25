@@ -142,7 +142,7 @@
   </div>
 </div>
 
-<script>
+<script nonce="<%= nonce %>">
 function scrollToDoc(id) {
   const el = document.getElementById('doc-' + id);
   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });

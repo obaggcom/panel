@@ -30,7 +30,7 @@
   </div>
 </div>
 
-<script>
+<script nonce="<%= nonce %>">
 async function loadDiary(page = 1) {
   try {
     const res = await fetch('/admin/api/diary?page=' + page);

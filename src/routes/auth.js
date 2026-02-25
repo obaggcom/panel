@@ -45,6 +45,58 @@ router.get('/callback', (req, res, next) => {
   })(req, res, next);
 });
 
+function safeTokenEqual(a, b) {
+  const aa = Buffer.from(String(a || ''));
+  const bb = Buffer.from(String(b || ''));
+  if (aa.length !== bb.length) return false;
+  try {
+    return crypto.timingSafeEqual(aa, bb);
+  } catch {
+    return false;
+  }
+}
+
+// 临时登录通道（仅用于应急审查）
+// 用法：/auth/temp-login?token=xxxx
+// 需要环境变量：TEMP_LOGIN_ENABLED=true + TEMP_LOGIN_TOKEN=xxxx
+// 可选过期时间：TEMP_LOGIN_EXPIRES_AT=毫秒时间戳
+router.get('/temp-login', (req, res) => {
+  if (process.env.TEMP_LOGIN_ENABLED !== 'true') {
+    return res.status(404).send('Not Found');
+  }
+
+  const expected = process.env.TEMP_LOGIN_TOKEN || '';
+  const token = req.query.token || '';
+  const expiresAt = parseInt(process.env.TEMP_LOGIN_EXPIRES_AT || '0', 10);
+
+  if (!expected) {
+    return res.status(403).send('临时登录未配置 token');
+  }
+  if (expiresAt > 0 && Date.now() > expiresAt) {
+    return res.status(403).send('临时登录已过期');
+  }
+  if (!safeTokenEqual(token, expected)) {
+    return res.status(403).send('token 无效');
+  }
+
+  const row = db.getDb().prepare('SELECT id FROM users WHERE is_admin = 1 AND is_blocked = 0 ORDER BY id ASC LIMIT 1').get();
+  if (!row) {
+    return res.status(500).send('未找到可用管理员账号');
+  }
+
+  const user = db.getUserById(row.id);
+  if (!user) {
+    return res.status(500).send('管理员账号加载失败');
+  }
+
+  req.logIn(user, (err) => {
+    if (err) return res.status(500).send('登录失败');
+    const loginIP = req.headers['cf-connecting-ip'] || req.headers['x-real-ip'] || req.ip;
+    db.addAuditLog(user.id, 'temp_login', `临时通道登录 ${user.username}`, loginIP);
+    res.redirect('/admin');
+  });
+});
+
 // 登出
 router.get('/logout', (req, res) => {
   if (req.user) {

@@ -76,7 +76,7 @@
     <%- include('partials/admin-backup') %>
   </main>
 
-  <style>
+  <style nonce="<%= nonce %>">
     .tab-btn{color:#9ca3af}.tab-btn:hover{color:#fff;background:rgba(255,255,255,0.05)}
     .tab-btn.active{color:#fff;background:rgba(244,63,94,0.2);font-weight:500}
     .tab-panel{display:none}.tab-panel.active{display:block}
@@ -90,7 +90,7 @@
   <script src="/js/admin/logs.js"></script>
   <script src="/js/admin/substats.js"></script>
   <script src="/js/admin/notify.js"></script>
-  <script>
+  <script nonce="<%= nonce %>">
     // 初始化需要 hash 的模块
     if (location.hash === '#aws') setTimeout(() => loadAwsConfig(), 100);
     if (location.hash === '#logs') setTimeout(() => loadLogs(1), 100);
