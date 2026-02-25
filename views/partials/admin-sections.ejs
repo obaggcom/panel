@@ -230,36 +230,8 @@
   </div>
 </div>
 
-<!-- 通知 Tab -->
+<!-- 通知 Tab（仅 TG 配置和事件开关） -->
 <div class="tab-panel space-y-4" data-tab="notify">
-  <div class="glass rounded-2xl p-5">
-    <h3 class="text-white text-sm font-medium mb-3">📢 公告管理</h3>
-    <div class="flex gap-2">
-      <input type="text" id="announcement-text" value="<%= announcement %>" placeholder="输入公告内容（留空则不显示）" class="flex-1 bg-black/30 text-white px-4 py-2 rounded-xl border border-white/10 text-sm">
-      <button onclick="saveAnnouncement()" class="bg-rose-600 hover:bg-rose-500 text-white px-4 py-2 rounded-xl text-sm transition">保存</button>
-    </div>
-  </div>
-
-  <div class="glass rounded-2xl p-5">
-    <h3 class="text-white text-sm font-medium mb-3">👥 注册人数限制</h3>
-    <p class="text-gray-600 text-xs mb-3">设为 0 表示不限制，当前已注册 <span class="text-rose-400"><%= userCount %></span> 人</p>
-    <div class="flex gap-2">
-      <input type="number" id="max-users-input" value="<%= maxUsers %>" min="0" placeholder="0 = 不限制" class="flex-1 bg-black/30 text-white px-4 py-2 rounded-xl border border-white/10 text-sm">
-      <button onclick="saveMaxUsers()" class="bg-rose-600 hover:bg-rose-500 text-white px-4 py-2 rounded-xl text-sm transition">保存</button>
-    </div>
-  </div>
-
-  <div class="glass rounded-2xl p-5">
-    <h3 class="text-white text-sm font-medium mb-3">📦 默认流量限额</h3>
-    <p class="text-gray-600 text-xs mb-3">新用户注册时的默认流量上限（TB），0 = 无限</p>
-    <div class="flex flex-wrap gap-2">
-      <input id="default-traffic-limit" value="<%= defaultTrafficLimit ? (defaultTrafficLimit / 1099511627776).toFixed(2) : 0 %>" min="0" step="any" placeholder="0 = 无限" class="flex-1 min-w-[120px] bg-black/30 text-white px-4 py-2 rounded-xl border border-white/10 text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none">
-      <span class="text-gray-500 text-sm self-center">TB</span>
-      <button onclick="saveDefaultTrafficLimit()" class="bg-rose-600 hover:bg-rose-500 text-white px-4 py-2 rounded-xl text-sm transition">保存</button>
-      <button onclick="applyDefaultTrafficLimit()" class="glass text-gray-200 px-4 py-2 rounded-xl text-sm hover:bg-white/10 transition whitespace-nowrap">应用到全部用户</button>
-    </div>
-  </div>
-
   <div class="glass rounded-2xl p-5">
     <h3 class="text-white text-sm font-medium mb-4">🔔 Telegram 通知配置</h3>
     <div class="grid grid-cols-2 gap-3 mb-4">
@@ -295,6 +267,37 @@
           <input type="checkbox" class="tg-event accent-rose-500" data-key="<%= ev.key %>" <%= (typeof tgEvents !== 'undefined' && tgEvents[ev.key]) ? 'checked' : '' %> onchange="toggleEvent(this)">
         </label>
       <% }); %>
+    </div>
+  </div>
+</div>
+
+<!-- 设置 Tab -->
+<div class="tab-panel space-y-4" data-tab="settings">
+  <div class="glass rounded-2xl p-5">
+    <h3 class="text-white text-sm font-medium mb-3">📢 公告管理</h3>
+    <div class="flex gap-2">
+      <input type="text" id="announcement-text" value="<%= announcement %>" placeholder="输入公告内容（留空则不显示）" class="flex-1 bg-black/30 text-white px-4 py-2 rounded-xl border border-white/10 text-sm">
+      <button onclick="saveAnnouncement()" class="bg-rose-600 hover:bg-rose-500 text-white px-4 py-2 rounded-xl text-sm transition">保存</button>
+    </div>
+  </div>
+
+  <div class="glass rounded-2xl p-5">
+    <h3 class="text-white text-sm font-medium mb-3">👥 注册人数限制</h3>
+    <p class="text-gray-600 text-xs mb-3">设为 0 表示不限制，当前已注册 <span class="text-rose-400"><%= userCount %></span> 人</p>
+    <div class="flex gap-2">
+      <input type="number" id="max-users-input" value="<%= maxUsers %>" min="0" placeholder="0 = 不限制" class="flex-1 bg-black/30 text-white px-4 py-2 rounded-xl border border-white/10 text-sm">
+      <button onclick="saveMaxUsers()" class="bg-rose-600 hover:bg-rose-500 text-white px-4 py-2 rounded-xl text-sm transition">保存</button>
+    </div>
+  </div>
+
+  <div class="glass rounded-2xl p-5">
+    <h3 class="text-white text-sm font-medium mb-3">📦 默认流量限额</h3>
+    <p class="text-gray-600 text-xs mb-3">新用户注册时的默认流量上限（TB），0 = 无限</p>
+    <div class="flex flex-wrap gap-2">
+      <input id="default-traffic-limit" value="<%= defaultTrafficLimit ? (defaultTrafficLimit / 1099511627776).toFixed(2) : 0 %>" min="0" step="any" placeholder="0 = 无限" class="flex-1 min-w-[120px] bg-black/30 text-white px-4 py-2 rounded-xl border border-white/10 text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none">
+      <span class="text-gray-500 text-sm self-center">TB</span>
+      <button onclick="saveDefaultTrafficLimit()" class="bg-rose-600 hover:bg-rose-500 text-white px-4 py-2 rounded-xl text-sm transition">保存</button>
+      <button onclick="applyDefaultTrafficLimit()" class="glass text-gray-200 px-4 py-2 rounded-xl text-sm hover:bg-white/10 transition whitespace-nowrap">应用到全部用户</button>
     </div>
   </div>
 </div>
