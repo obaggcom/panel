@@ -88,23 +88,7 @@
       </div>
     </div>
 
-    <!-- 🍑 蜜桃酱 AI 运维概览 -->
-    <div class="glass rounded-2xl p-3" id="peach-section">
-      <div class="flex items-center justify-between">
-        <div class="flex items-center gap-2">
-          <span>🍑</span>
-          <span class="text-white text-sm font-medium">蜜桃酱 AI 守护</span>
-          <span class="inline-block w-2 h-2 rounded-full bg-emerald-400" style="animation:pulse 2s infinite"></span>
-          <span class="text-emerald-400 text-[10px]">在线</span>
-        </div>
-      </div>
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;text-align:center;margin-top:8px">
-        <div><p class="text-white text-sm font-bold" id="peach-days">-</p><p class="text-gray-600 text-[10px]">运行天数</p></div>
-        <div><p class="text-cyan-400 text-sm font-bold" id="peach-patrols">-</p><p class="text-gray-600 text-[10px]">累计巡检</p></div>
-        <div><p class="text-amber-400 text-sm font-bold" id="peach-fixes">-</p><p class="text-gray-600 text-[10px]">自动修复</p></div>
-        <div><p class="text-emerald-400 text-sm font-bold" id="peach-avail">-</p><p class="text-gray-600 text-[10px]">节点可用率</p></div>
-      </div>
-    </div>
+    <!-- 蜜桃酱卡片已移除，数据展示在气泡面板中 -->
 
     <!-- 节点列表（按分组展示） -->
     <div>
@@ -311,10 +295,11 @@
         const d = await r.json();
         // 顶部成就栏
         const el = id => document.getElementById(id);
-        el('peach-days').textContent = d.uptimeDays + ' 天';
-        el('peach-patrols').textContent = d.totalPatrols;
-        el('peach-fixes').textContent = d.totalSwaps + d.totalFixes;
-        el('peach-avail').textContent = d.nodeAvailability + '%';
+        const set = (id, v) => { const e = el(id); if(e) e.textContent = v; };
+        set('peach-days', d.uptimeDays + ' 天');
+        set('peach-patrols', d.totalPatrols);
+        set('peach-fixes', d.totalSwaps + d.totalFixes);
+        set('peach-avail', d.nodeAvailability + '%');
         // 气泡面板
         el('pb-patrols').textContent = d.todayPatrols;
         el('pb-swaps').textContent = d.todaySwaps;
