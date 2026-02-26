@@ -142,7 +142,7 @@ router.get('/', requireAuth, (req, res) => {
 router.get('/api/peach-status', requireAuth, (req, res) => {
   try {
     const d = db.getDb();
-    const today = new Date().toISOString().slice(0, 10);
+    const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
 
     const todayStats = d.prepare(`
       SELECT

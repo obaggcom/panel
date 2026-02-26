@@ -64,7 +64,7 @@ function getGlobalTraffic() {
 }
 
 function getTodayTraffic() {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
   return _getDb().prepare(`
     SELECT COALESCE(SUM(uplink), 0) as total_up, COALESCE(SUM(downlink), 0) as total_down
     FROM traffic_daily WHERE date = ?
@@ -72,15 +72,15 @@ function getTodayTraffic() {
 }
 
 function _rangeDateCondition(range) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
   if (range === 'today') return { where: 'AND t.date = ?', params: [today] };
   if (range === '7d') {
     const d = new Date(); d.setDate(d.getDate() - 6);
-    return { where: 'AND t.date >= ?', params: [d.toISOString().slice(0, 10)] };
+    return { where: 'AND t.date >= ?', params: [new Date(d.getTime() + 8 * 3600000).toISOString().slice(0, 10)] };
   }
   if (range === '30d') {
     const d = new Date(); d.setDate(d.getDate() - 29);
-    return { where: 'AND t.date >= ?', params: [d.toISOString().slice(0, 10)] };
+    return { where: 'AND t.date >= ?', params: [new Date(d.getTime() + 8 * 3600000).toISOString().slice(0, 10)] };
   }
   if (range === 'all') return { where: '', params: [] };
   // 支持具体日期 YYYY-MM-DD
@@ -127,7 +127,7 @@ function getNodesTrafficByRange(range) {
 
 function getTrafficTrend(days = 30) {
   const d = new Date(); d.setDate(d.getDate() - days + 1);
-  const startDate = d.toISOString().slice(0, 10);
+  const startDate = new Date(d.getTime() + 8 * 3600000).toISOString().slice(0, 10);
   return _getDb().prepare(`
     SELECT date,
       COALESCE(SUM(uplink), 0) as total_up,
@@ -142,7 +142,7 @@ function getTrafficTrend(days = 30) {
 // Sprint 6: 用户按天/按节点的流量明细
 function getUserTrafficDaily(userId, days = 30) {
   const d = new Date(); d.setDate(d.getDate() - days + 1);
-  const startDate = d.toISOString().slice(0, 10);
+  const startDate = new Date(d.getTime() + 8 * 3600000).toISOString().slice(0, 10);
   return _getDb().prepare(`
     SELECT td.date, td.node_id, n.name as node_name,
       td.uplink, td.downlink
@@ -155,7 +155,7 @@ function getUserTrafficDaily(userId, days = 30) {
 
 function getUserTrafficDailyAgg(userId, days = 30) {
   const d = new Date(); d.setDate(d.getDate() - days + 1);
-  const startDate = d.toISOString().slice(0, 10);
+  const startDate = new Date(d.getTime() + 8 * 3600000).toISOString().slice(0, 10);
   return _getDb().prepare(`
     SELECT date,
       COALESCE(SUM(uplink), 0) as total_up,

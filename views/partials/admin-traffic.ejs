@@ -35,7 +35,7 @@
           <button onclick="switchRange('30d')" class="text-[11px] px-2.5 py-1 rounded-lg transition glass text-gray-400 hover:text-white" data-range="30d">30天</button>
           <button onclick="switchRange('all')" class="text-[11px] px-2.5 py-1 rounded-lg transition glass text-gray-400 hover:text-white" data-range="all">全部</button>
         </div>
-        <input type="date" id="traffic-date" value="<%= new Date().toISOString().slice(0,10) %>" onchange="switchRange('date')" class="bg-black/30 text-white text-[11px] px-2.5 py-1 rounded-lg border border-white/10">
+        <input type="date" id="traffic-date" value="<%= new Date(Date.now()+8*3600000).toISOString().slice(0,10) %>" onchange="switchRange('date')" class="bg-black/30 text-white text-[11px] px-2.5 py-1 rounded-lg border border-white/10">
       </div>
     </div>
     <div class="overflow-x-auto max-h-[480px] overflow-y-auto">

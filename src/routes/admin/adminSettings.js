@@ -135,7 +135,7 @@ router.get('/ops-dashboard', (req, res) => {
   const blocked = nodes.filter(n => n.fail_count >= 3).length;
   const offline = total - online;
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
   const lastPatrol = db.getSetting('ops_last_patrol') || '';
 
   const todayStats = d.prepare(`
