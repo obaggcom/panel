@@ -28,10 +28,32 @@ function getOnlineCache() { return _onlineCache; }
 function saveTrafficRecords(nodeId, records) {
   if (!records || records.length === 0) return 0;
   const userTraffic = {};
+
+  // 捐赠节点脱敏 tag → userId 映射缓存
+  let _tagCache = null;
+  function resolveTag(tag, nodeId) {
+    if (!_tagCache) {
+      // 加载该节点所有 uuid 前缀映射
+      _tagCache = {};
+      try {
+        const rows = db.getDb().prepare('SELECT user_id, uuid FROM user_node_uuid WHERE node_id = ?').all(nodeId);
+        for (const row of rows) _tagCache[row.uuid.slice(0, 8)] = row.user_id;
+      } catch {}
+    }
+    return _tagCache[tag] || null;
+  }
+
   for (const r of records) {
-    if (!userTraffic[r.userId]) userTraffic[r.userId] = { up: 0, down: 0 };
-    if (r.direction === 'uplink') userTraffic[r.userId].up += r.value;
-    else userTraffic[r.userId].down += r.value;
+    let userId = r.userId;
+    // 捐赠节点脱敏格式：通过 tag 反查 userId
+    if (!userId && r.tag) {
+      userId = resolveTag(r.tag, nodeId);
+      if (!userId) continue; // 无法反查，跳过
+    }
+    if (!userId) continue;
+    if (!userTraffic[userId]) userTraffic[userId] = { up: 0, down: 0 };
+    if (r.direction === 'uplink') userTraffic[userId].up += r.value;
+    else userTraffic[userId].down += r.value;
   }
   let count = 0;
   for (const [userId, traffic] of Object.entries(userTraffic)) {
@@ -81,7 +103,15 @@ function updateOnlineCache(nodeId, trafficRecords) {
 
   const nodeUserIds = new Set();
   for (const r of trafficRecords) {
-    nodeUserIds.add(r.userId);
+    // 捐赠节点可能只有 tag 没有 userId，通过 uuid 反查
+    let uid = r.userId;
+    if (!uid && r.tag) {
+      try {
+        const row = db.getDb().prepare('SELECT user_id FROM user_node_uuid WHERE node_id = ? AND uuid LIKE ?').get(nodeId, r.tag + '%');
+        if (row) uid = row.user_id;
+      } catch {}
+    }
+    if (uid) nodeUserIds.add(uid);
   }
 
   // 更新节点在线信息

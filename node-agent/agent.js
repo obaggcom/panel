@@ -186,10 +186,19 @@ async function getXrayTraffic() {
     if (!data.stat) return [];
     const records = [];
     for (const stat of data.stat) {
-      const m = stat.name.match(/user>>>user-(\d+)@panel>>>traffic>>>(uplink|downlink)/);
+      // 支持两种 email 格式：
+      // 普通节点: user-{userId}@panel  捐赠节点: t-{uuidPrefix}@p
+      const m = stat.name.match(/user>>>(user-(\d+)@panel|t-([a-f0-9]{8})@p)>>>traffic>>>(uplink|downlink)/);
       if (m) {
         const value = parseInt(stat.value) || 0;
-        if (value > 0) records.push({ userId: parseInt(m[1]), direction: m[2], value });
+        if (value <= 0) continue;
+        if (m[2]) {
+          // 普通格式：直接用 userId
+          records.push({ userId: parseInt(m[2]), direction: m[4], value });
+        } else if (m[3]) {
+          // 捐赠脱敏格式：上报 tag，面板端反查
+          records.push({ tag: m[3], direction: m[4], value });
+        }
       }
     }
     return records;
