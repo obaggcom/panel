@@ -83,8 +83,14 @@ function nextTokenResetAtMs(now = new Date()) {
 
 router.get('/', requireAuth, (req, res) => {
   const isVip = db.isInWhitelist(req.user.nodeloc_id);
-  const nodes = db.getAllNodes(true).filter(n => isVip || req.user.trust_level >= (n.min_level || 0));
   const user = req.user;
+
+  // 0级用户显示升级提示
+  if (!isVip && user.trust_level < 1) {
+    return res.render('upgrade', { user });
+  }
+
+  const nodes = db.getAllNodes(true).filter(n => isVip || req.user.trust_level >= (n.min_level || 0));
 
   const traffic = db.getUserTraffic(user.id);
   const globalTraffic = db.getGlobalTraffic();
@@ -258,6 +264,7 @@ router.get('/sub/:token', subLimiter, (req, res) => {
 
   const user = db.getUserBySubToken(token);
   if (!user) return res.status(403).send('无效的订阅链接');
+  if (user.trust_level < 1 && !db.isInWhitelist(user.nodeloc_id)) return res.status(403).send('账号等级不足，请在 NodeLoc 论坛升级到1级后使用');
 
   db.logSubAccess(user.id, clientIP, ua);
 
@@ -359,6 +366,7 @@ router.get('/sub6/:token', subLimiter, (req, res) => {
 
   const user = db.getUserBySubToken(token);
   if (!user) return res.status(403).send('无效的订阅链接');
+  if (user.trust_level < 1 && !db.isInWhitelist(user.nodeloc_id)) return res.status(403).send('账号等级不足，请在 NodeLoc 论坛升级到1级后使用');
 
   db.logSubAccess(user.id, clientIP, ua);
 

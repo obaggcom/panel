@@ -19,7 +19,7 @@ function findOrCreateUser(profile) {
       WHERE nodeloc_id = ?
     `).run(profile.username, profile.name, profile.avatar_url, profile.trust_level, profile.email, profile.id);
     const user = _getDb().prepare('SELECT * FROM users WHERE nodeloc_id = ?').get(profile.id);
-    if (wasFrozen) {
+    if (wasFrozen && (user.is_admin || user.trust_level >= 1)) {
       _ensureUserHasAllNodeUuids(user.id);
       user._wasFrozen = true;
     }
@@ -43,7 +43,9 @@ function findOrCreateUser(profile) {
 
   try { const { notify } = require('../notify'); notify.userRegister(profile.username); } catch {}
 
-  _ensureUserHasAllNodeUuids(newUser.id);
+  if (newUser.is_admin || newUser.trust_level >= 1) {
+    _ensureUserHasAllNodeUuids(newUser.id);
+  }
   _removeFromRegisterWhitelist(profile.username);
 
   return newUser;
@@ -106,7 +108,10 @@ function freezeUser(id) {
 
 function unfreezeUser(id) {
   _getDb().prepare('UPDATE users SET is_frozen = 0 WHERE id = ?').run(id);
-  _ensureUserHasAllNodeUuids(id);
+  const u = _getDb().prepare('SELECT is_admin, trust_level FROM users WHERE id = ?').get(id);
+  if (u && (u.is_admin || u.trust_level >= 1)) {
+    _ensureUserHasAllNodeUuids(id);
+  }
 }
 
 function autoFreezeInactiveUsers(days = 15) {

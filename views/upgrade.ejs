@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>账号待升级 - 小姨子的诱惑</title>
+  <link rel="icon" href="/favicon.ico">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/tailwind.min.css">
+  <style nonce="<%= nonce %>">
+    *{font-family:'Noto Sans SC',system-ui,-apple-system,sans-serif}
+    body{background:#0c0a0f;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px}
+    .card{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);backdrop-filter:blur(12px)}
+  </style>
+</head>
+<body>
+  <main class="card rounded-2xl p-8 max-w-md w-full text-center">
+    <div class="text-4xl mb-4">🔒</div>
+    <h1 class="text-white text-2xl font-bold mb-2">账号等级不足</h1>
+    <p class="text-gray-300 leading-7">你好 <span class="text-rose-300"><%= user.username %></span>，当前是 <b>0级</b> 用户。</p>
+    <p class="text-gray-300 leading-7 mt-2">请先在 NodeLoc 论坛升级到 <b>1级</b>，再回来使用节点和订阅功能。</p>
+    <a href="/auth/logout" class="inline-block mt-6 px-4 py-2 rounded-lg bg-rose-500 hover:bg-rose-400 text-white">退出登录</a>
+  </main>
+</body>
+</html>
