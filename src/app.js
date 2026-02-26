@@ -172,6 +172,39 @@ cron.schedule('0 4 * * *', async () => {
       db.addAuditLog(null, 'auto_freeze_expired', `自动冻结 ${expired.length} 个到期用户: ${expired.map(u => u.username).join(', ')}`, 'system');
       await deployService.syncAllNodesConfig(db);
     }
+    // 自动回收捐赠者标识：捐赠节点全部离线超过 7 天则回收
+    try {
+      const donors = d.prepare('SELECT DISTINCT user_id FROM node_donations WHERE status = ?').all('online');
+      for (const { user_id } of donors) {
+        // 检查该用户所有捐赠节点是否都已离线
+        const activeCount = d.prepare(`
+          SELECT COUNT(*) as cnt FROM node_donations nd
+          JOIN nodes n ON nd.node_id = n.id
+          WHERE nd.user_id = ? AND nd.status = 'online' AND n.is_active = 1
+        `).get(user_id)?.cnt || 0;
+
+        if (activeCount === 0) {
+          // 所有捐赠节点都离线了，检查最后活跃时间
+          const lastActive = d.prepare(`
+            SELECT MAX(n.last_check) as last FROM node_donations nd
+            JOIN nodes n ON nd.node_id = n.id
+            WHERE nd.user_id = ? AND nd.status = 'online'
+          `).get(user_id)?.last;
+
+          if (lastActive) {
+            const daysSince = (Date.now() - new Date(lastActive).getTime()) / 86400000;
+            if (daysSince >= 7) {
+              d.prepare('UPDATE users SET is_donor = 0 WHERE id = ? AND is_donor = 1').run(user_id);
+              d.prepare("UPDATE node_donations SET status = 'offline' WHERE user_id = ? AND status = 'online'").run(user_id);
+              const u = db.getUserById(user_id);
+              logger.info(`[捐赠回收] 用户 ${u?.username || user_id} 捐赠节点离线超7天，回收捐赠者标识`);
+              db.addAuditLog(null, 'donor_revoke', `回收捐赠者标识: ${u?.username || user_id} (节点离线超7天)`, 'system');
+            }
+          }
+        }
+      }
+    } catch (e) { logger.error({ err: e }, '捐赠者回收检查失败'); }
+
   } catch (err) { logger.error({ err }, '清理/冻结失败'); }
 }, { timezone: 'Asia/Shanghai' });
 
