@@ -58,8 +58,24 @@ function setupAuth(app) {
 }
 
 // 登录检查中间件
+// 用户活跃时间更新缓存（节流5分钟，避免频繁写库）
+const _lastActiveCache = new Map();
+
 function requireAuth(req, res, next) {
-  if (req.isAuthenticated() && !req.user.is_blocked) return next();
+  if (req.isAuthenticated() && !req.user.is_blocked) {
+    // 更新最后活跃时间（每5分钟最多写一次）
+    const userId = req.user.id;
+    const now = Date.now();
+    const last = _lastActiveCache.get(userId) || 0;
+    if (now - last > 5 * 60 * 1000) {
+      _lastActiveCache.set(userId, now);
+      try {
+        const db = require('../services/database');
+        db.getDb().prepare("UPDATE users SET last_login = datetime('now', 'localtime') WHERE id = ?").run(userId);
+      } catch {}
+    }
+    return next();
+  }
   res.redirect('/auth/login');
 }
 
