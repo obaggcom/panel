@@ -148,14 +148,14 @@ router.post('/health-check', async (req, res) => {
 
     const pings = agents.map(async (a) => {
       const result = await agentWs.sendCommand(a.nodeId, { type: 'ping' });
-      return { nodeId: a.nodeId, name: a.nodeName, online: result.success, agent: true };
+      return { nodeId: a.nodeId, name: a.nodeName, online: result.success, agent: true, sshHost: (nodes.find(n=>n.id===a.nodeId)||{}).ssh_host || '' };
     });
     const pingResults = await Promise.all(pings);
     results.push(...pingResults);
 
     for (const n of nodes) {
       if (!onlineNodeIds.has(n.id)) {
-        results.push({ nodeId: n.id, name: n.name, online: false, agent: false });
+        results.push({ nodeId: n.id, name: n.name, online: false, agent: false, sshHost: n.ssh_host || '' });
       }
     }
 

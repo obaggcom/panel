@@ -299,11 +299,15 @@ async function doHealthCheck(btn) {
     });
     const data = await resp.json();
     if (data.ok && data.results) {
+      // 收集在线节点的 SSH host，同机节点也标记为在线
+      const onlineHosts = new Set();
+      data.results.forEach(r => { if (r.agent && r.online) onlineHosts.add(r.sshHost || ''); });
       data.results.forEach(r => {
+        const isOnline = r.agent || onlineHosts.has(r.sshHost || '');
         const agentCell = document.querySelector(`[data-agent-cell="${r.nodeId}"]`);
         if (agentCell) {
-          agentCell.innerHTML = r.agent
-            ? `<span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]" title="Agent 在线${r.online ? '' : ' (ping 失败)'}"></span>`
+          agentCell.innerHTML = isOnline
+            ? `<span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]" title="Agent 在线${r.agent ? '' : ' (同机)'}"></span>`
             : `<span class="inline-block w-2.5 h-2.5 rounded-full bg-gray-600" title="Agent 离线"></span>`;
         }
       });
