@@ -181,4 +181,43 @@ router.post('/nodes/:id/update-ss', (req, res) => {
   res.json({ ok: true });
 });
 
+// 手动添加节点（SS/IPv6）
+router.post('/nodes/manual', (req, res) => {
+  const { name, host, port, protocol, ip_version, region, ss_method, ss_password } = req.body;
+  if (!name || !host || !port) return res.status(400).json({ error: '缺少必填字段' });
+  const p = parseInt(port);
+  if (!p || p < 1 || p > 65535) return res.status(400).json({ error: '端口无效' });
+
+  const proto = protocol === 'ss' ? 'ss' : 'vless';
+  const ipv = parseInt(ip_version) === 6 ? 6 : 4;
+
+  const { v4: uuidv4 } = require('uuid');
+  const nodeData = {
+    name: name.trim(),
+    host: host.trim(),
+    port: p,
+    uuid: uuidv4(), // SS 不用但字段 NOT NULL
+    protocol: proto,
+    ip_version: ipv,
+    region: (region || '').trim(),
+    is_manual: 1,
+  };
+
+  const result = db.addNode(nodeData);
+  const nodeId = result.lastInsertRowid;
+
+  // SS 特有字段通过 updateNode 写入
+  if (proto === 'ss') {
+    db.updateNode(nodeId, {
+      ss_method: ss_method || 'aes-256-gcm',
+      ss_password: ss_password || '',
+    });
+  }
+  // ip_version 也通过 updateNode 写入
+  db.updateNode(nodeId, { ip_version: ipv });
+
+  db.addAuditLog(req.user.id, 'node_add_manual', `手动添加节点: ${name} (${proto}/IPv${ipv})`, req.ip);
+  res.json({ ok: true, id: nodeId });
+});
+
 module.exports = router;
