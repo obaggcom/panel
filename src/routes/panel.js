@@ -1,6 +1,6 @@
 const express = require('express');
 const db = require('../services/database');
-const { buildVlessLink, generateV2raySubForUser, generateClashSubForUser, generateSingboxSubForUser, generateV2raySsSub, generateClashSsSub, generateSingboxSsSub, detectClient } = require('../utils/vless');
+const { buildVlessLink, buildSsLink, generateV2raySubForUser, generateClashSubForUser, generateSingboxSubForUser, generateV2raySsSub, generateClashSsSub, generateSingboxSsSub, detectClient } = require('../utils/vless');
 const { formatBytes } = require('../services/traffic');
 const { requireAuth } = require('../middleware/auth');
 const { subLimiter } = require('../middleware/rateLimit');
@@ -91,7 +91,7 @@ router.get('/', requireAuth, (req, res) => {
 
   const userNodes = nodes.map(n => {
     const userUuid = db.getUserNodeUuid(user.id, n.id);
-    return { ...n, link: buildVlessLink(n, userUuid.uuid) };
+    return { ...n, link: n.protocol === 'ss' ? buildSsLink(n) : buildVlessLink(n, userUuid.uuid) };
   });
 
   // 查询节点 AI 操作标签
