@@ -237,14 +237,10 @@ function toggleDonateNodes() {
   _showDonateOnly = !_showDonateOnly;
   const btn = document.getElementById('btn-toggle-donate');
   btn.classList.toggle('bg-amber-500/20', _showDonateOnly);
-  btn.textContent = _showDonateOnly ? '🎁 显示全部' : '🎁 捐赠节点';
+  btn.textContent = _showDonateOnly ? '🎁 返回全部节点' : '🎁 捐赠节点';
   document.querySelectorAll('[data-donation]').forEach(el => {
     const isDonation = el.dataset.donation === '1';
-    if (_showDonateOnly) {
-      el.style.display = isDonation ? '' : 'none';
-    } else {
-      el.style.display = isDonation ? 'none' : '';
-    }
+    el.style.display = (_showDonateOnly ? !isDonation : isDonation) ? 'none' : '';
   });
 }
 // 默认隐藏捐赠节点
