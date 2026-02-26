@@ -175,10 +175,9 @@ async function loadAllInstances(force) {
     let html = '';
     for (const acc of accounts) {
       if (acc.instances.length === 0) continue;
-      html += '<div class="mb-4">' +
-        '<div class="text-[11px] text-gray-500 mb-3 px-1">📦 ' + escapeHtml(acc.accountName) + ' <span class="text-gray-600">#' + escapeHtml(acc.accountId) + '</span></div>';
+      html += '<div class="mb-5">' +
+        '<div class="text-xs text-gray-500 mb-3 px-1">📦 ' + escapeHtml(acc.accountName) + ' <span class="text-gray-600">#' + escapeHtml(acc.accountId) + '</span></div>';
 
-      // 按区域分组
       const byRegion = {};
       for (const inst of acc.instances) {
         const r = inst.region || 'unknown';
@@ -189,8 +188,8 @@ async function loadAllInstances(force) {
       for (const [region, instances] of Object.entries(byRegion)) {
         const regionLabel = regionNames[region] || '🌐 ' + region;
         html += '<div class="mb-4">' +
-          '<div class="text-[10px] text-gray-500 mb-2 px-1 uppercase tracking-wider">' + regionLabel + '</div>' +
-          '<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">';
+          '<div class="text-xs text-gray-500 mb-2 px-1">' + regionLabel + '</div>' +
+          '<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">';
 
         for (const inst of instances) {
           const isBlocked = inst.boundNode && (inst.boundNode.remark?.includes('被墙') || inst.boundNode.remark?.includes('离线') || !inst.boundNode.is_active);
@@ -203,39 +202,40 @@ async function loadAllInstances(force) {
           const cardBg = isBlocked ? 'bg-red-500/5 border-red-500/20' : 'bg-white/[0.03] ' + stateColor;
           const dotColor = inst.state === 'running' ? 'bg-emerald-400' : inst.state === 'stopped' ? 'bg-gray-600' : 'bg-yellow-400';
           const typeBadge = inst.instanceType === 'lightsail'
-            ? '<span class="text-[8px] px-1 py-px rounded bg-purple-500/15 text-purple-400/70">LS</span>'
-            : '<span class="text-[8px] px-1 py-px rounded bg-sky-500/15 text-sky-400/70">EC2</span>';
+            ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-400">LS</span>'
+            : '<span class="text-[10px] px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-400">EC2</span>';
 
-          html += '<div class="' + cardBg + ' border rounded-xl p-2.5 flex flex-col gap-1.5 group">' +
+          html += '<div class="' + cardBg + ' border rounded-xl p-3 flex flex-col gap-2">' +
             // 第一行：状态点 + 名称 + 类型
-            '<div class="flex items-center gap-1.5">' +
-            '<span class="w-1.5 h-1.5 rounded-full ' + dotColor + ' flex-shrink-0"></span>' +
-            '<span class="text-[11px] text-white/90 font-medium truncate flex-1">' + escapeHtml(inst.name || inst.instanceId) + '</span>' +
+            '<div class="flex items-center gap-2">' +
+            '<span class="w-2 h-2 rounded-full ' + dotColor + ' flex-shrink-0"></span>' +
+            '<span class="text-sm text-white font-medium truncate flex-1">' + escapeHtml(inst.name || inst.instanceId) + '</span>' +
             typeBadge +
             '</div>' +
-            // 第二行：IP
-            '<div class="text-[10px] font-mono ' + (inst.publicIp ? 'text-blue-400/60' : 'text-gray-700 italic') + ' truncate">' +
-            (inst.publicIp || '无公网 IP') + '</div>' +
-            // 第三行：绑定节点
+            // 第二行：IP + 绑定节点
+            '<div class="flex items-center gap-2 flex-wrap">' +
+            '<span class="text-xs font-mono ' + (inst.publicIp ? 'text-blue-400/70' : 'text-gray-600 italic') + '">' +
+            (inst.publicIp || '无公网 IP') + '</span>' +
             (inst.boundNode
-              ? '<div class="text-[10px] truncate ' + (isBlocked ? 'text-red-400' : 'text-emerald-400/70') + '">' +
-                (isBlocked ? '⚠️ ' : '🔗 ') + escapeHtml(inst.boundNode.name) + '</div>'
+              ? '<span class="text-xs ' + (isBlocked ? 'text-red-400' : 'text-emerald-400/80') + '">' +
+                (isBlocked ? '⚠️ ' : '🔗 ') + escapeHtml(inst.boundNode.name) + '</span>'
               : '') +
+            '</div>' +
             // 换 IP 按钮（仅 running 实例）
             (inst.state === 'running'
               ? '<button onclick="awsSwapIp(\'' + safeInstId + '\',\'' + safeInstType + '\',\'' + safeRegion + '\',' + safeAccId + ')" ' +
-                'class="mt-auto text-[10px] w-full py-1 rounded-lg text-center transition-colors ' +
+                'class="text-xs w-full py-1.5 rounded-lg text-center transition-colors ' +
                 (isBlocked
                   ? 'bg-red-500/20 text-red-300 hover:bg-red-500/30'
-                  : 'bg-white/5 text-gray-500 hover:bg-amber-500/20 hover:text-amber-300') + '">🔄 换 IP</button>'
-              : '<div class="mt-auto text-[10px] text-center text-gray-700 py-1">' + escapeHtml(inst.state) + '</div>') +
+                  : 'bg-white/5 text-gray-400 hover:bg-amber-500/20 hover:text-amber-300') + '">🔄 换 IP</button>'
+              : '<div class="text-xs text-center text-gray-600 py-1.5">' + escapeHtml(inst.state) + '</div>') +
             '</div>';
         }
         html += '</div></div>';
       }
       html += '</div>';
     }
-    if (!html) html = '<p class="text-gray-500 text-xs text-center py-4">暂无实例</p>';
+    if (!html) html = '<p class="text-gray-500 text-sm text-center py-4">暂无实例</p>';
     container.innerHTML = html;
     loading.classList.add('hidden');
     container.classList.remove('hidden');
@@ -262,8 +262,7 @@ async function awsSwapIp(instanceId, type, region, accountId) {
   } catch (e) { showToast('❌ 网络错误'); }
 }
 
-// 保留旧函数名兼容（节点Tab的换IP按钮可能调用）
+// 兼容旧调用
 async function awsInstanceAction(action, instanceId, type, region, accountId) {
   if (action === 'swap-ip') return awsSwapIp(instanceId, type, region, accountId);
-  showToast('该操作已移除');
 }
