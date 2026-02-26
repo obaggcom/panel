@@ -89,7 +89,7 @@ function init(server) {
               if (node && node.is_active) {
                 db.updateNode(nodeId, {
                   is_active: 0,
-                  remark: '🔴 Agent 断开连接',
+                  remark: '🔴 断开',
                   last_check: new Date().toISOString().replace('T', ' ').substring(0, 19),
                 });
                 db.addAuditLog(null, 'agent_offline', `节点 Agent 断开: ${node.name}`, 'system');
