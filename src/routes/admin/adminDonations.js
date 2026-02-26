@@ -36,8 +36,8 @@ router.post('/donations/:id/approve', async (req, res) => {
     }
 
     // 查捐赠者用户名
-    const donor = d.prepare('SELECT username FROM users WHERE id = ?').get(donation.user_id);
-    const donorName = donor ? donor.username : `用户${donation.user_id}`;
+    const donor = d.prepare('SELECT username, name FROM users WHERE id = ?').get(donation.user_id);
+    const donorName = donor ? (donor.name || donor.username) : `用户${donation.user_id}`;
 
     // 自动生成节点名：国旗+城市+用户名+捐赠
     const nodeName = name || (region ? `${region}-${donorName}捐赠` : `${donorName}捐赠`);
