@@ -60,7 +60,10 @@ router.post('/donations/:id/approve', async (req, res) => {
     const uuidRepo = require('../../services/repos/uuidRepo');
     uuidRepo.ensureAllUsersHaveUuid(nodeId);
 
-    db.addAuditLog(null, 'donate_approve', `审核通过捐赠节点: ${nodeName} (${donation.server_ip}), 捐赠者: 用户#${donation.user_id}`, '');
+    // 标记捐赠者
+    d.prepare('UPDATE users SET is_donor = 1 WHERE id = ?').run(donation.user_id);
+
+    db.addAuditLog(null, 'donate_approve', `审核通过捐赠节点: ${nodeName} (${donation.server_ip}), 捐赠者: ${donorName}`, '');
 
     res.json({ ok: true, nodeId, agentToken });
   } catch (e) {

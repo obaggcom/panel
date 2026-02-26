@@ -292,6 +292,15 @@ function initTables() {
   if (!userCols.includes('traffic_limit')) {
     db.exec("ALTER TABLE users ADD COLUMN traffic_limit INTEGER DEFAULT 0");
   }
+  if (!userCols.includes('is_donor')) {
+  }
+  if (!userCols.includes('last_token_reset')) {
+    db.exec("ALTER TABLE users ADD COLUMN last_token_reset TEXT DEFAULT '2000-01-01'");
+    db.exec("ALTER TABLE users ADD COLUMN is_donor INTEGER DEFAULT 0");
+  }
+  if (!userCols.includes('last_token_reset')) {
+    db.exec("ALTER TABLE users ADD COLUMN last_token_reset TEXT DEFAULT '2000-01-01'");
+  }
 
   // AWS 多账号表
   db.exec(`

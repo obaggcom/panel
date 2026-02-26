@@ -28,27 +28,72 @@ async function rotateCore() {
   return { success, failed, uuidCount };
 }
 
-// 自动轮换（cron 调用）：核心 + 7天一次 token 轮换
+/**
+ * 获取用户订阅重置间隔天数
+ * 0-1级: 7天
+ * 2级: 15天
+ * 3级/捐赠者: 月底重置（返回 'monthly'）
+ * 4级: 不重置（返回 Infinity）
+ */
+function getResetInterval(user) {
+  if (user.trust_level >= 4) return Infinity;
+  if (user.trust_level >= 3 || user.is_donor) return 'monthly';
+  if (user.trust_level >= 2) return 15;
+  return 7;
+}
+
+/**
+ * 检查是否需要重置该用户的订阅 token
+ */
+function shouldResetToken(user, today) {
+  const interval = getResetInterval(user);
+  if (interval === Infinity) return false;
+
+  const lastReset = user.last_token_reset || '2000-01-01';
+
+  if (interval === 'monthly') {
+    // 月底重置：当前日期是新月份的第一天，且上次重置不是本月
+    const todayDate = new Date(today + 'T00:00:00+08:00');
+    const lastDate = new Date(lastReset + 'T00:00:00+08:00');
+    // 判断是否跨月了
+    return todayDate.getFullYear() > lastDate.getFullYear() ||
+           todayDate.getMonth() > lastDate.getMonth();
+  }
+
+  // 按天数间隔
+  const daysSince = Math.floor((new Date(today).getTime() - new Date(lastReset).getTime()) / 86400000);
+  return daysSince >= interval;
+}
+
+// 自动轮换（cron 调用）：核心 + 分级 token 轮换
 async function rotateAll() {
   const core = await rotateCore();
 
-  // 每7天重置订阅 token
-  const lastTokenRotate = db.getSetting('last_token_rotate') || '2000-01-01';
-  const daysSince = Math.floor((Date.now() - new Date(lastTokenRotate).getTime()) / 86400000);
+  // 分级订阅 token 重置
+  const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
+  const users = db.getAllUsers();
   let tokenCount = 0;
-  if (daysSince >= 7) {
-    const users = db.getAllUsers();
-    for (const user of users) { db.resetSubToken(user.id); }
-    tokenCount = users.length;
-    db.setSetting('last_token_rotate', new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10));
-    console.log(`[轮换] 已重置 ${tokenCount} 个用户订阅 token（每7天）`);
-  } else {
-    console.log(`[轮换] 订阅 token 跳过（距上次 ${daysSince} 天，7天一换）`);
+  const resetDetails = { lv01: 0, lv2: 0, lv3donor: 0, lv4skip: 0 };
+
+  for (const user of users) {
+    if (shouldResetToken(user, today)) {
+      db.resetSubToken(user.id);
+      db.getDb().prepare("UPDATE users SET last_token_reset = ? WHERE id = ?").run(today, user.id);
+      tokenCount++;
+      const interval = getResetInterval(user);
+      if (interval === 7) resetDetails.lv01++;
+      else if (interval === 15) resetDetails.lv2++;
+      else if (interval === 'monthly') resetDetails.lv3donor++;
+    } else if (getResetInterval(user) === Infinity) {
+      resetDetails.lv4skip++;
+    }
   }
+
+  console.log(`[轮换] 订阅token重置 ${tokenCount} 个 (Lv0-1:${resetDetails.lv01} Lv2:${resetDetails.lv2} Lv3/捐赠:${resetDetails.lv3donor} Lv4免重置:${resetDetails.lv4skip})`);
 
   const result = { ...core, tokenCount };
   console.log(`[轮换完成] 同步 ✅${core.success} ❌${core.failed} | UUID:${core.uuidCount} | 订阅:${tokenCount}`);
-  db.addAuditLog(null, 'auto_rotate', `自动轮换完成 同步✅${core.success} ❌${core.failed} UUID:${core.uuidCount} 订阅:${tokenCount}`, 'system');
+  db.addAuditLog(null, 'auto_rotate', `自动轮换完成 同步✅${core.success} ❌${core.failed} UUID:${core.uuidCount} 订阅:${tokenCount} (Lv0-1:${resetDetails.lv01} Lv2:${resetDetails.lv2} Lv3/捐赠:${resetDetails.lv3donor} Lv4免:${resetDetails.lv4skip})`, 'system');
   notify.rotate(result);
   return result;
 }
