@@ -189,7 +189,7 @@ async function loadAllInstances(force) {
         const regionLabel = regionNames[region] || '🌐 ' + region;
         html += '<div class="mb-4">' +
           '<div class="text-sm text-gray-500 mb-2 px-1">' + regionLabel + '</div>' +
-          '<div class="grid grid-cols-1 md:grid-cols-2 gap-3">';
+          '<div class="grid grid-cols-2 gap-3">';
 
         for (const inst of instances) {
           const isBlocked = inst.boundNode && (inst.boundNode.remark?.includes('被墙') || inst.boundNode.remark?.includes('离线') || !inst.boundNode.is_active);
