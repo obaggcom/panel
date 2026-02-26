@@ -51,14 +51,12 @@ function loadDonations() {
 }
 
 async function approveDonation(id) {
-  const name = await _prompt('节点名称（留空自动生成）', { placeholder: '留空自动生成：地区-用户名捐赠' });
-  if (name === null) return;
-  const group = await _prompt('分组名称', { value: '捐赠节点', placeholder: '捐赠节点' });
-  if (group === null) return;
+  const ok = await _confirm('确定通过？节点将自动命名并加入「捐赠节点」分组');
+  if (!ok) return;
   fetch('/admin/api/donations/' + id + '/approve', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _csrf },
-    body: JSON.stringify({ name: name || '', group_name: group || '捐赠节点' })
+    body: JSON.stringify({ name: '', group_name: '捐赠节点' })
   }).then(r => r.json()).then(d => {
     if (d.ok) { showToast('✅ 已通过，节点已创建'); loadDonations(); }
     else showToast('❌ ' + (d.error || '操作失败'), 3000);
