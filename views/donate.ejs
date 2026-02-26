@@ -95,10 +95,14 @@
               <span class="text-gray-500 text-[11px] ml-1"><%= _protoMap[d.protocol_choice] || '' %></span>
             </div>
             <span class="text-xs px-2 py-1 rounded-full
-              <% if (d.status === 'online') { %>bg-green-500/20 text-green-400<% } else if (d.status === 'pending') { %>bg-amber-500/20 text-amber-400<% } else if (d.status === 'rejected') { %>bg-red-500/20 text-red-400<% } else { %>bg-gray-500/20 text-gray-400<% } %>
+              <% const _realOnline = d.status === 'online' && d.node_is_active === 1; %>
+              <% if (_realOnline) { %>bg-green-500/20 text-green-400<% } else if (d.status === 'pending') { %>bg-amber-500/20 text-amber-400<% } else if (d.status === 'online' && !d.node_is_active) { %>bg-red-500/20 text-red-400<% } else if (d.status === 'rejected') { %>bg-red-500/20 text-red-400<% } else { %>bg-gray-500/20 text-gray-400<% } %>
             ">
-              <% if (d.status === 'online') { %>✅ 在线
-              <% } else if (d.status === 'pending') { %>⏳ 等待
+              <% if (_realOnline) { %>✅ 在线
+              <% } else if (d.status === 'pending') { %>⏳ 审核中
+              <% } else if (d.status === 'online' && !d.node_is_active) { %>🔴 离线
+              <% } else if (d.status === 'rejected') { %>❌ 拒绝
+              <% } else { %>⚫ 离线<% } %>
               <% } else if (d.status === 'rejected') { %>❌ 拒绝
               <% } else { %>⚫ 离线<% } %>
             </span>

@@ -515,7 +515,13 @@ router.get('/donate', requireAuth, (req, res) => {
   const d = db.getDb();
 
   // 获取用户的捐赠记录
-  const donations = d.prepare("SELECT * FROM node_donations WHERE user_id = ? AND status IN ('pending', 'online') ORDER BY created_at DESC").all(user.id);
+  const donations = d.prepare(`
+    SELECT nd.*, n.is_active as node_is_active 
+    FROM node_donations nd 
+    LEFT JOIN nodes n ON nd.node_id = n.id 
+    WHERE nd.user_id = ? AND nd.status IN ('pending', 'online') 
+    ORDER BY nd.created_at DESC
+  `).all(user.id);
 
   // 生成或获取用户的捐赠 token
   // 如果已有 token 且未被使用（无 node_donations 记录），复用它
