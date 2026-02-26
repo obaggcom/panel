@@ -4,7 +4,7 @@
     <button onclick="doHealthCheck(this)" class="glass text-white px-4 py-2 rounded-xl text-sm hover:bg-white/10 transition">🔍 检测状态</button>
     <form method="POST" action="/admin/api/rotate" class="inline">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-      <button type="button" class="glass text-white px-4 py-2 rounded-xl text-sm hover:bg-white/10 transition" onclick="_confirm('确定轮换？').then(ok=>{if(ok)this.closest('form').submit()})">🔄 手动轮换</button>
+      <button type="button" class="glass text-white px-4 py-2 rounded-xl text-sm hover:bg-white/10 transition" onclick="_confirm('确定轮换所有节点的UUID？').then(ok=>{if(ok)this.closest('form').submit()})">🔄 手动轮换UUID</button>
     </form>
     <button onclick="doUpdateAllAgents(this)" class="glass text-white px-4 py-2 rounded-xl text-sm hover:bg-white/10 transition">🔄 更新 Agent</button>
   </div>
