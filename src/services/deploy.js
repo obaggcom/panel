@@ -467,6 +467,116 @@ async function installAgentOnNode(ssh, nodeId, db) {
   console.log(`[Agent安装] 节点#${nodeId} Agent 安装完成`);
 }
 
+// ========== IPv6 SS 自动部署 ==========
+
+async function deploySsNode(sshInfo, db) {
+  // 确保数据库已初始化
+  if (typeof db.getDb === 'function') db.getDb();
+
+  const port = randomPort();
+  const ssPassword = crypto.randomBytes(16).toString('base64');
+  const ssMethod = sshInfo.ss_method || 'aes-256-gcm';
+
+  const geo = await detectRegion(sshInfo.host);
+  const existingNodes = db.getAllNodes();
+  const name = generateNodeName(geo, existingNodes, false);
+  const region = `${geo.emoji} ${geo.cityCN}`;
+
+  const nodeData = {
+    name, host: sshInfo.host, port, uuid: '00000000-0000-0000-0000-000000000000',
+    protocol: 'ss', ip_version: 6, ss_method: ssMethod, ss_password: ssPassword,
+    ssh_host: sshInfo.host,
+    ssh_port: sshInfo.ssh_port || 22,
+    ssh_user: sshInfo.ssh_user || 'root',
+    ssh_password: sshInfo.ssh_password,
+    region, remark: '⏳ 部署中...', is_active: 0
+  };
+  const result = db.addNode(nodeData);
+  const nodeId = result.lastInsertRowid;
+
+  const ssh = new NodeSSH();
+  try {
+    const connectOpts = {
+      host: sshInfo.host,
+      port: sshInfo.ssh_port || 22,
+      username: sshInfo.ssh_user || 'root',
+    };
+    if (sshInfo.ssh_key_path) connectOpts.privateKeyPath = sshInfo.ssh_key_path;
+    else if (sshInfo.ssh_password) connectOpts.password = sshInfo.ssh_password;
+
+    console.log(`[SS部署] ${name} (${sshInfo.host}) 开始...`);
+    await ssh.connect(connectOpts);
+
+    // 检测 IPv6 地址
+    const ipv6Result = await ssh.execCommand("ip -6 addr show scope global | grep inet6 | head -1 | awk '{print $2}' | cut -d/ -f1");
+    const ipv6Addr = (ipv6Result.stdout || '').trim();
+    if (!ipv6Addr) {
+      throw new Error('服务器没有 IPv6 地址');
+    }
+    console.log(`[SS部署] 检测到 IPv6: ${ipv6Addr}`);
+
+    // 更新节点 host 为 IPv6 地址
+    db.updateNode(nodeId, { host: ipv6Addr });
+
+    // 安装 xray
+    const installScript = fs.readFileSync(path.join(__dirname, '..', '..', 'templates', 'install-xray.sh'), 'utf8').trim();
+    const installResult = await ssh.execCommand(installScript, { execOptions: { timeout: 180000 } });
+    if (!installResult.stdout.includes('INSTALL_OK')) {
+      throw new Error('xray 安装失败: ' + (installResult.stderr || installResult.stdout).substring(0, 200));
+    }
+
+    // 生成 SS 配置
+    const config = {
+      log: { loglevel: 'warning' },
+      inbounds: [{
+        tag: 'ss-in', port, listen: '::',
+        protocol: 'shadowsocks',
+        settings: { method: ssMethod, password: ssPassword, network: 'tcp,udp' }
+      }],
+      outbounds: [
+        { tag: 'direct', protocol: 'freedom' },
+        { tag: 'block', protocol: 'blackhole' }
+      ]
+    };
+
+    const configJson = JSON.stringify(config, null, 2);
+    await ssh.execCommand('mkdir -p /usr/local/etc/xray');
+    await sftpWriteFile(ssh, '/usr/local/etc/xray/config.json', configJson);
+
+    // 开放防火墙端口
+    await ssh.execCommand(`
+      iptables -C INPUT -p tcp --dport ${port} -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport ${port} -j ACCEPT
+      iptables -C INPUT -p udp --dport ${port} -j ACCEPT 2>/dev/null || iptables -I INPUT -p udp --dport ${port} -j ACCEPT
+      ip6tables -C INPUT -p tcp --dport ${port} -j ACCEPT 2>/dev/null || ip6tables -I INPUT -p tcp --dport ${port} -j ACCEPT
+      ip6tables -C INPUT -p udp --dport ${port} -j ACCEPT 2>/dev/null || ip6tables -I INPUT -p udp --dport ${port} -j ACCEPT
+      command -v netfilter-persistent &>/dev/null && netfilter-persistent save || true
+    `);
+
+    // 启动 xray
+    const startResult = await ssh.execCommand('systemctl enable xray && systemctl restart xray && sleep 2 && systemctl is-active --quiet xray && echo DEPLOY_OK || echo DEPLOY_FAIL');
+
+    if (startResult.stdout.includes('DEPLOY_OK')) {
+      db.updateNode(nodeId, { is_active: 1, remark: '' });
+      db.addAuditLog(sshInfo.triggered_by || null, 'node_deploy_ss', `SS部署成功: ${name} (IPv6: ${ipv6Addr}:${port})`, 'system');
+      console.log(`[SS部署成功] ${name} (${ipv6Addr}:${port})`);
+      try { notify.deploy(name, true, `IPv6 SS | ${ipv6Addr}:${port}`); } catch {}
+    } else {
+      const errMsg = (startResult.stderr || startResult.stdout).substring(0, 200);
+      db.updateNode(nodeId, { remark: `❌ 部署失败: ${errMsg}` });
+      db.addAuditLog(sshInfo.triggered_by || null, 'node_deploy_ss_fail', `SS部署失败: ${name} - ${errMsg}`, 'system');
+      console.error(`[SS部署失败] ${name}: ${errMsg}`);
+      try { notify.deploy(name, false, errMsg); } catch {}
+    }
+  } catch (err) {
+    db.updateNode(nodeId, { remark: `❌ ${err.message}` });
+    db.addAuditLog(sshInfo.triggered_by || null, 'node_deploy_ss_fail', `SS部署异常: ${name} - ${err.message}`, 'system');
+    console.error(`[SS部署异常] ${name}: ${err.message}`);
+    try { notify.deploy(name, false, err.message); } catch {}
+  } finally {
+    ssh.dispose();
+  }
+}
+
 // syncAllNodesConfig 对外暴露去抖版本
 const syncAllNodesConfig = syncAllNodesConfigDebounced;
-module.exports = { deployNode, detectRegion, generateNodeName, syncNodeConfig, syncAllNodesConfig, pushConfigToNode };
+module.exports = { deployNode, deploySsNode, detectRegion, generateNodeName, syncNodeConfig, syncAllNodesConfig, pushConfigToNode };

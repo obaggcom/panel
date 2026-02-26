@@ -28,8 +28,8 @@ function getNodeById(id) {
 
 function addNode(node) {
   const stmt = _getDb().prepare(`
-    INSERT INTO nodes (name, host, port, uuid, protocol, network, security, ssh_host, ssh_port, ssh_user, ssh_password, ssh_key_path, xray_config_path, socks5_host, socks5_port, socks5_user, socks5_pass, is_active, region, remark, is_manual, fail_count, agent_token)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO nodes (name, host, port, uuid, protocol, network, security, ssh_host, ssh_port, ssh_user, ssh_password, ssh_key_path, xray_config_path, socks5_host, socks5_port, socks5_user, socks5_pass, is_active, region, remark, is_manual, fail_count, agent_token, ip_version, ss_method, ss_password)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   return stmt.run(
     node.name, node.host, node.port, node.uuid,
@@ -43,7 +43,10 @@ function addNode(node) {
     node.region, node.remark,
     node.is_manual ? 1 : 0,
     node.fail_count || 0,
-    node.agent_token || uuidv4()
+    node.agent_token || uuidv4(),
+    node.ip_version || 4,
+    node.ss_method || null,
+    node.ss_password || null
   );
 }
 

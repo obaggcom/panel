@@ -189,35 +189,22 @@
     </form>
   </details>
 
-  <!-- 手动添加 SS/IPv6 节点 -->
+  <!-- IPv6 SS 自动部署 -->
   <details class="glass rounded-2xl">
-    <summary class="text-cyan-400 text-sm cursor-pointer hover:text-cyan-300 p-4">➕ 手动添加节点（SS / IPv6）</summary>
-    <form class="px-4 pb-4 grid grid-cols-2 gap-3" onsubmit="return submitManualNode(event, this)">
-      <input type="text" name="name" placeholder="节点名称 *" required class="bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
-      <input type="text" name="host" placeholder="服务器地址（支持 IPv6）*" required class="bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
-      <input type="number" name="port" placeholder="端口 *" required min="1" max="65535" class="bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
-      <select name="protocol" onchange="toggleSsFields(this)" class="bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
-        <option value="vless">VLESS</option>
-        <option value="ss" selected>Shadowsocks</option>
+    <summary class="text-cyan-400 text-sm cursor-pointer hover:text-cyan-300 p-4">➕ 部署 IPv6 SS 节点（SSH 自动部署）</summary>
+    <form method="POST" action="/admin/api/nodes/deploy-ss" class="px-4 pb-4 grid grid-cols-2 gap-3" onsubmit="return validateSsDeployForm(this)">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="text" name="host" placeholder="服务器 IP（IPv4 SSH 地址）*" required class="bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+      <input type="password" name="ssh_password" placeholder="SSH 密码 *" required minlength="1" class="bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+      <input type="number" name="ssh_port" placeholder="SSH 端口（默认 22）" min="1" max="65535" class="bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+      <input type="text" name="ssh_user" placeholder="SSH 用户名（默认 root）" class="bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+      <select name="ss_method" class="bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm col-span-2">
+        <option value="aes-256-gcm">aes-256-gcm（推荐）</option>
+        <option value="aes-128-gcm">aes-128-gcm</option>
+        <option value="chacha20-ietf-poly1305">chacha20-ietf-poly1305</option>
       </select>
-      <select name="ip_version" class="bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
-        <option value="4">IPv4</option>
-        <option value="6" selected>IPv6</option>
-      </select>
-      <input type="text" name="region" placeholder="地区（可选）" class="bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
-      <div class="col-span-2 ss-fields">
-        <div class="grid grid-cols-2 gap-3">
-          <select name="ss_method" class="bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
-            <option value="aes-256-gcm">aes-256-gcm</option>
-            <option value="aes-128-gcm">aes-128-gcm</option>
-            <option value="chacha20-ietf-poly1305">chacha20-ietf-poly1305</option>
-            <option value="2022-blake3-aes-256-gcm">2022-blake3-aes-256-gcm</option>
-            <option value="2022-blake3-aes-128-gcm">2022-blake3-aes-128-gcm</option>
-          </select>
-          <input type="text" name="ss_password" placeholder="SS 密码 *" class="bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
-        </div>
-      </div>
-      <button type="submit" class="bg-cyan-600 hover:bg-cyan-500 text-white py-2.5 rounded-xl text-sm col-span-2 transition font-medium" id="manual-add-btn">➕ 添加</button>
+      <p class="text-[11px] text-gray-500 col-span-2">自动检测服务器 IPv6 地址、安装 xray、配置 SS 入站、开放防火墙</p>
+      <button class="bg-cyan-600 hover:bg-cyan-500 text-white py-2.5 rounded-xl text-sm col-span-2 transition font-medium" id="deploy-ss-btn">🚀 部署 SS</button>
     </form>
   </details>
 
@@ -233,29 +220,6 @@ function toggleSsFields(sel) {
   ssFields.style.display = sel.value === 'ss' ? '' : 'none';
 }
 
-// 手动添加节点
-async function submitManualNode(e, form) {
-  e.preventDefault();
-  const fd = new FormData(form);
-  const data = Object.fromEntries(fd.entries());
-  data.port = parseInt(data.port);
-  data.ip_version = parseInt(data.ip_version);
-  const btn = document.getElementById('manual-add-btn');
-  btn.textContent = '⏳ 添加中...'; btn.disabled = true;
-  try {
-    const resp = await fetch('/admin/api/nodes/manual', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _csrf },
-      body: JSON.stringify(data)
-    });
-    const res = await resp.json();
-    if (res.ok) { toast('✅ 节点已添加'); setTimeout(() => location.reload(), 800); }
-    else { toast(res.error || '添加失败', 2500, 'error'); }
-  } catch (err) { toast('网络错误', 2500, 'error'); }
-  btn.textContent = '➕ 添加'; btn.disabled = false;
-  return false;
-}
-
 // 部署表单校验
 function validateDeployForm(form) {
   const host = form.host.value.trim();
@@ -266,6 +230,18 @@ function validateDeployForm(form) {
   const port = form.ssh_port.value;
   if (port && (parseInt(port) < 1 || parseInt(port) > 65535)) { toast('SSH 端口范围 1-65535', 2500, 'error'); form.ssh_port.focus(); return false; }
   const btn = document.getElementById('deploy-btn');
+  btn.textContent = '⏳ 部署中...';
+  btn.classList.add('btn-loading');
+  return true;
+}
+
+// SS 部署表单校验
+function validateSsDeployForm(form) {
+  const host = form.host.value.trim();
+  const pwd = form.ssh_password.value;
+  if (!host) { toast('请填写服务器 IP', 2500, 'error'); form.host.focus(); return false; }
+  if (!pwd) { toast('请填写 SSH 密码', 2500, 'error'); form.ssh_password.focus(); return false; }
+  const btn = document.getElementById('deploy-ss-btn');
   btn.textContent = '⏳ 部署中...';
   btn.classList.add('btn-loading');
   return true;

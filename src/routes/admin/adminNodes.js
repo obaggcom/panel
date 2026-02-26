@@ -16,6 +16,27 @@ function isValidHost(host) {
 
 const router = express.Router();
 
+router.post('/nodes/deploy-ss', (req, res) => {
+  const { host, ssh_port, ssh_user, ssh_password, ss_method } = req.body;
+  if (!host || !ssh_password) return res.redirect('/admin#nodes');
+
+  const existing = db.getAllNodes().find(n => n.ssh_host === host.trim() || n.host === host.trim());
+  if (existing) {
+    db.addAuditLog(req.user.id, 'node_deploy_dup', `重复 IP: ${host} (已有节点: ${existing.name})`, req.ip);
+    return res.redirect('/admin?msg=dup#nodes');
+  }
+
+  db.addAuditLog(req.user.id, 'node_deploy_ss_start', `开始SS部署: ${host}`, req.ip);
+
+  deployService.deploySsNode({
+    host, ssh_port: parseInt(ssh_port) || 22, ssh_user: ssh_user || 'root', ssh_password,
+    ss_method: ss_method || 'aes-256-gcm',
+    triggered_by: req.user.id
+  }, db).catch(err => console.error('[SS部署异常]', err));
+
+  res.redirect('/admin?msg=deploying#nodes');
+});
+
 router.post('/nodes/deploy', (req, res) => {
   const { host, ssh_port, ssh_user, ssh_password, socks5_host, socks5_port, socks5_user, socks5_pass } = req.body;
   if (!host || !ssh_password) return res.redirect('/admin#nodes');
