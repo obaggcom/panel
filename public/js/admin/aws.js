@@ -176,7 +176,7 @@ async function loadAllInstances(force) {
     for (const acc of accounts) {
       if (acc.instances.length === 0) continue;
       html += '<div class="mb-5">' +
-        '<div class="text-xs text-gray-500 mb-3 px-1">📦 ' + escapeHtml(acc.accountName) + ' <span class="text-gray-600">#' + escapeHtml(acc.accountId) + '</span></div>';
+        '<div class="text-sm text-gray-400 mb-3 px-1">📦 ' + escapeHtml(acc.accountName) + ' <span class="text-gray-600">#' + escapeHtml(acc.accountId) + '</span></div>';
 
       const byRegion = {};
       for (const inst of acc.instances) {
@@ -188,8 +188,8 @@ async function loadAllInstances(force) {
       for (const [region, instances] of Object.entries(byRegion)) {
         const regionLabel = regionNames[region] || '🌐 ' + region;
         html += '<div class="mb-4">' +
-          '<div class="text-xs text-gray-500 mb-2 px-1">' + regionLabel + '</div>' +
-          '<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">';
+          '<div class="text-sm text-gray-500 mb-2 px-1">' + regionLabel + '</div>' +
+          '<div class="grid grid-cols-1 md:grid-cols-2 gap-3">';
 
         for (const inst of instances) {
           const isBlocked = inst.boundNode && (inst.boundNode.remark?.includes('被墙') || inst.boundNode.remark?.includes('离线') || !inst.boundNode.is_active);
@@ -205,30 +205,29 @@ async function loadAllInstances(force) {
             ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-400">LS</span>'
             : '<span class="text-[10px] px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-400">EC2</span>';
 
-          html += '<div class="' + cardBg + ' border rounded-xl p-3 flex flex-col gap-2">' +
+          html += '<div class="' + cardBg + ' border rounded-2xl p-4 flex flex-col gap-3">' +
             // 第一行：状态点 + 名称 + 类型
             '<div class="flex items-center gap-2">' +
-            '<span class="w-2 h-2 rounded-full ' + dotColor + ' flex-shrink-0"></span>' +
-            '<span class="text-sm text-white font-medium truncate flex-1">' + escapeHtml(inst.name || inst.instanceId) + '</span>' +
+            '<span class="w-2.5 h-2.5 rounded-full ' + dotColor + ' flex-shrink-0"></span>' +
+            '<span class="text-base text-white font-semibold truncate flex-1">' + escapeHtml(inst.name || inst.instanceId) + '</span>' +
             typeBadge +
             '</div>' +
-            // 第二行：IP + 绑定节点
-            '<div class="flex items-center gap-2 flex-wrap">' +
-            '<span class="text-xs font-mono ' + (inst.publicIp ? 'text-blue-400/70' : 'text-gray-600 italic') + '">' +
-            (inst.publicIp || '无公网 IP') + '</span>' +
+            // 第二行：IP
+            '<div class="text-sm font-mono ' + (inst.publicIp ? 'text-blue-300/90' : 'text-gray-500 italic') + '">' +
+            (inst.publicIp || '无公网 IP') + '</div>' +
+            // 第三行：绑定节点
             (inst.boundNode
-              ? '<span class="text-xs ' + (isBlocked ? 'text-red-400' : 'text-emerald-400/80') + '">' +
-                (isBlocked ? '⚠️ ' : '🔗 ') + escapeHtml(inst.boundNode.name) + '</span>'
-              : '') +
-            '</div>' +
+              ? '<div class="text-sm truncate ' + (isBlocked ? 'text-red-400' : 'text-emerald-300/90') + '">' +
+                (isBlocked ? '⚠️ ' : '🔗 ') + escapeHtml(inst.boundNode.name) + '</div>'
+              : '<div class="text-sm text-gray-600">未绑定节点</div>') +
             // 换 IP 按钮（仅 running 实例）
             (inst.state === 'running'
               ? '<button onclick="awsSwapIp(\'' + safeInstId + '\',\'' + safeInstType + '\',\'' + safeRegion + '\',' + safeAccId + ')" ' +
-                'class="text-xs w-full py-1.5 rounded-lg text-center transition-colors ' +
+                'class="text-sm w-full py-2 rounded-xl text-center transition-colors ' +
                 (isBlocked
-                  ? 'bg-red-500/20 text-red-300 hover:bg-red-500/30'
-                  : 'bg-white/5 text-gray-400 hover:bg-amber-500/20 hover:text-amber-300') + '">🔄 换 IP</button>'
-              : '<div class="text-xs text-center text-gray-600 py-1.5">' + escapeHtml(inst.state) + '</div>') +
+                  ? 'bg-red-500/20 text-red-200 hover:bg-red-500/30'
+                  : 'bg-white/5 text-gray-300 hover:bg-amber-500/20 hover:text-amber-200') + '">🔄 换 IP</button>'
+              : '<div class="text-sm text-center text-gray-600 py-2">' + escapeHtml(inst.state) + '</div>') +
             '</div>';
         }
         html += '</div></div>';
@@ -262,7 +261,5 @@ async function awsSwapIp(instanceId, type, region, accountId) {
   } catch (e) { showToast('❌ 网络错误'); }
 }
 
-// 兼容旧调用
-async function awsInstanceAction(action, instanceId, type, region, accountId) {
-  if (action === 'swap-ip') return awsSwapIp(instanceId, type, region, accountId);
-}
+// awsInstanceAction 已移除，统一使用 awsSwapIp
+
