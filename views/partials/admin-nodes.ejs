@@ -46,8 +46,9 @@
             <% } %>
           </select>
         </div>
-        <div><span class="text-gray-500">分组</span>
-          <span class="block text-gray-400 mt-0.5 cursor-pointer hover:text-white" onclick="editNodeGroup(<%= n.id %>, '<%= (n.group_name||'').replace(/'/g,"\\'") %>', '<%= (n.tags||'').replace(/'/g,"\\'") %>')"><%= n.group_name || '-' %></span>
+        <div><span class="text-gray-500">在线</span>
+          <% const _ocm = (typeof nodeOnlineCount !== 'undefined' && nodeOnlineCount.get(n.id)) || 0; %>
+          <span class="block mt-0.5 text-xs <%= _ocm > 0 ? 'text-emerald-400' : 'text-gray-500' %>"><%= _ocm %> 人</span>
         </div>
         <div><span class="text-gray-500">Agent</span>
           <span class="block mt-0.5" data-agent-cell="<%= n.id %>">
@@ -88,7 +89,7 @@
         <thead class="text-gray-500 border-b border-white/5 text-xs">
           <tr>
             <th class="py-3 px-4">名称</th><th class="py-3 px-4">地址</th><th class="py-3 px-4">端口</th>
-            <th class="py-3 px-4">等级</th><th class="py-3 px-4">分组</th><th class="py-3 px-4">状态</th><th class="py-3 px-4">Agent</th><th class="py-3 px-4 hidden md:table-cell">最后检测</th><th class="py-3 px-4">操作</th>
+            <th class="py-3 px-4">等级</th><th class="py-3 px-4">在线</th><th class="py-3 px-4">状态</th><th class="py-3 px-4">Agent</th><th class="py-3 px-4 hidden md:table-cell">最后检测</th><th class="py-3 px-4">操作</th>
           </tr>
         </thead>
         <tbody class="text-gray-300">
@@ -115,7 +116,8 @@
               </select>
             </td>
             <td class="py-3 px-4">
-              <span class="text-xs text-gray-400 cursor-pointer hover:text-white" onclick="editNodeGroup(<%= n.id %>, '<%= (n.group_name||'').replace(/'/g,"\\'") %>', '<%= (n.tags||'').replace(/'/g,"\\'") %>')"><%= n.group_name || '-' %></span>
+              <% const _oc = (typeof nodeOnlineCount !== 'undefined' && nodeOnlineCount.get(n.id)) || 0; %>
+              <span class="text-xs <%= _oc > 0 ? 'text-emerald-400' : 'text-gray-500' %>"><%= _oc %> 人</span>
             </td>
             <td class="py-3 px-4" data-status-cell="<%= n.id %>">
               <div class="flex items-center gap-1.5">

@@ -13,11 +13,21 @@ router.get('/', (req, res) => {
     tgEvents[k] = db.getSetting(k) === 'true';
   });
   const onlineAgents = new Set(agentWs.getConnectedAgents().map(a => a.nodeId));
+  // 每节点在线人数 Map: nodeId → count
+  const { getOnlineCache } = require('../services/health');
+  const onlineCache = getOnlineCache();
+  const nodeOnlineCount = new Map();
+  if (onlineCache.full && onlineCache.full.nodes) {
+    for (const n of onlineCache.full.nodes) {
+      nodeOnlineCount.set(n.nodeId, n.count || 0);
+    }
+  }
 
   res.render('admin', {
     users: [],
     nodes: db.getAllNodes(),
     onlineAgents,
+    nodeOnlineCount,
     whitelist: db.getWhitelist(),
     logs: { rows: [], total: 0 },
     globalTraffic: db.getGlobalTraffic(),
