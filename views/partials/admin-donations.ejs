@@ -45,6 +45,7 @@ function loadDonations() {
             <span class="text-xs ${st.cls}">${st.text}</span>
           </div>
           <div class="text-xs text-gray-500">捐赠者: ${user} · ${protoLabel} · ${dn.region || '未知地区'} · ${time}</div>
+          ${dn.remark ? '<div class="text-xs mt-0.5 ' + (dn.remark.startsWith('❌') ? 'text-red-400' : dn.remark.startsWith('⚠') ? 'text-amber-400' : 'text-emerald-400') + '">' + dn.remark + '</div>' : ''}
         </div>
         <div class="flex gap-2 shrink-0">${actions}</div>
       </div>`;

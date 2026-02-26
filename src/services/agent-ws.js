@@ -237,6 +237,30 @@ function handleAuth(ws, msg) {
       ws.send(JSON.stringify({ type: 'auth_ok', message: '捐赠节点已连接，等待管理员审核' }));
       console.log(`[Agent-WS] 捐赠节点连接 from ${ip}, 用户#${donation.user_id}, 令牌: ${token}`);
       db.addAuditLog(donation.user_id, 'donate_connect', `捐赠节点连接: IP ${ip}`, ip);
+
+      // 如果选了 SS 或双协议，异步检测 IPv6
+      const protoChoice = donation.protocol_choice || tokenRecord?.protocol_choice || 'vless';
+      if (protoChoice === 'ss' || protoChoice === 'dual') {
+        setTimeout(async () => {
+          try {
+            // 捐赠节点未审核时用临时ID注册到agents以便发命令
+            const tempId = `donate-${donation.id}`;
+            agents.set(tempId, { ws, nodeId: tempId, nodeName: `捐赠#${donation.id}`, ip, connectedAt: new Date(Date.now() + 8 * 3600000).toISOString(), lastReport: null, reportData: null, _pongReceived: true });
+            const result = await sendCommand(tempId, { type: 'exec', command: "ip -6 addr show scope global | grep inet6 | head -1 | awk '{print $2}' | cut -d/ -f1" });
+            const ipv6 = result.success && result.data?.stdout?.trim();
+            if (ipv6) {
+              d.prepare('UPDATE node_donations SET remark = ? WHERE id = ?').run(`IPv6: ${ipv6}`, donation.id);
+              console.log(`[Agent-WS] 捐赠节点 IPv6 检测成功: ${ipv6}`);
+            } else {
+              const failMsg = protoChoice === 'ss' ? '❌ 未检测到 IPv6，无法部署 SS 节点' : '⚠️ 未检测到 IPv6，仅支持 VLESS';
+              d.prepare('UPDATE node_donations SET remark = ? WHERE id = ?').run(failMsg, donation.id);
+              console.log(`[Agent-WS] 捐赠节点 ${ip} 无 IPv6 (选择: ${protoChoice})`);
+            }
+          } catch (e) {
+            console.error(`[Agent-WS] IPv6 检测异常:`, e.message);
+          }
+        }, 3000); // 等3秒确保连接稳定
+      }
     }
     // 异步检测地区
     try {
