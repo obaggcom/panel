@@ -15,7 +15,16 @@
     <div class="overflow-x-auto">
       <table class="w-full text-sm text-left">
         <thead class="text-gray-500 border-b border-white/5 text-xs">
-          <tr><th class="py-3 px-4">用户</th><th class="py-3 px-4">ID</th><th class="py-3 px-4">等级</th><th class="py-3 px-4">已用/限额</th><th class="py-3 px-4">到期</th><th class="py-3 px-4">最后登录</th><th class="py-3 px-4">状态</th><th class="py-3 px-4">操作</th></tr>
+          <tr>
+            <th class="py-3 px-4">用户</th>
+            <th class="py-3 px-4 cursor-pointer hover:text-rose-400 transition select-none" onclick="sortUsers('id')">ID <span id="sort-icon-id" class="text-xs"></span></th>
+            <th class="py-3 px-4 cursor-pointer hover:text-rose-400 transition select-none" onclick="sortUsers('trust_level')">等级 <span id="sort-icon-trust_level" class="text-xs"></span></th>
+            <th class="py-3 px-4 cursor-pointer hover:text-rose-400 transition select-none" onclick="sortUsers('total_traffic')">已用/限额 <span id="sort-icon-total_traffic" class="text-xs">▼</span></th>
+            <th class="py-3 px-4 cursor-pointer hover:text-rose-400 transition select-none" onclick="sortUsers('expires_at')">到期 <span id="sort-icon-expires_at" class="text-xs"></span></th>
+            <th class="py-3 px-4 cursor-pointer hover:text-rose-400 transition select-none" onclick="sortUsers('last_login')">最后活跃 <span id="sort-icon-last_login" class="text-xs"></span></th>
+            <th class="py-3 px-4">状态</th>
+            <th class="py-3 px-4">操作</th>
+          </tr>
         </thead>
         <tbody class="text-gray-300" id="users-tbody">
           <tr><td colspan="8" class="py-8 text-center text-gray-500">加载中...</td></tr>
@@ -38,6 +47,22 @@
   (function(){
     const csrfToken = '<%= csrfToken %>';
     let _searchTimer = null;
+    let _userSortBy = 'total_traffic';
+    let _userSortDir = 'DESC';
+
+    function sortUsers(col) {
+      if (_userSortBy === col) {
+        _userSortDir = _userSortDir === 'DESC' ? 'ASC' : 'DESC';
+      } else {
+        _userSortBy = col;
+        _userSortDir = 'DESC';
+      }
+      // 更新图标
+      document.querySelectorAll('[id^="sort-icon-"]').forEach(el => el.textContent = '');
+      const icon = document.getElementById('sort-icon-' + col);
+      if (icon) icon.textContent = _userSortDir === 'DESC' ? '▼' : '▲';
+      loadUsers(1);
+    }
 
     function _fmtBytes(b) {
       if (!b || b === 0) return '0 B';
@@ -48,7 +73,7 @@
 
     window.loadUsers = async function(page = 1) {
       const search = (document.getElementById('user-search').value || '').trim();
-      const params = new URLSearchParams({ page, search });
+      const params = new URLSearchParams({ page, search, sortBy: _userSortBy, sortDir: _userSortDir });
       const resp = await fetch('/admin/api/users?' + params);
       const data = await resp.json();
       const tbody = document.getElementById('users-tbody');
@@ -117,7 +142,7 @@
             <div><span class="text-gray-500">等级</span><span class="block text-gray-300 mt-0.5">${u.trust_level}</span></div>
             <div><span class="text-gray-500">流量</span><span class="block text-gray-400 mt-0.5">${_fmtBytes(u.total_traffic || 0)} / <span class="cursor-pointer text-cyan-400" onclick="setTrafficLimit(${u.id}, '${u.username}', ${u.traffic_limit || 0})">${limitText}</span></span></div>
             <div><span class="text-gray-500">到期</span><span class="block mt-0.5 cursor-pointer ${expiryClass}" onclick="setExpiry(${u.id}, '${u.username}', '${u.expires_at || ''}')">${expiryText}</span></div>
-            <div class="col-span-2"><span class="text-gray-500">最后登录</span><span class="text-gray-500 ml-2">${u.last_login || '-'}</span></div>
+            <div class="col-span-2"><span class="text-gray-500">最后活跃</span><span class="text-gray-500 ml-2">${u.last_login || '-'}</span></div>
           </div>
           <div class="flex gap-3 pt-1.5 border-t border-white/5">
             <form method="POST" action="/admin/api/users/${u.id}/toggle-block" class="inline"><input type="hidden" name="_csrf" value="${csrfToken}"><button class="text-xs ${blockBtnClass} hover:underline">${blockBtnText}</button></form>

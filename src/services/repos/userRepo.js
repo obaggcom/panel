@@ -71,13 +71,19 @@ function getAllUsers() {
   `).all();
 }
 
-function getAllUsersPaged(limit = 20, offset = 0, search = '') {
+function getAllUsersPaged(limit = 20, offset = 0, search = '', sortBy = 'total_traffic', sortDir = 'DESC') {
   const where = search ? "WHERE u.username LIKE '%' || @search || '%' OR u.name LIKE '%' || @search || '%'" : '';
+  const allowedSorts = {
+    id: 'u.id', username: 'u.username', trust_level: 'u.trust_level',
+    total_traffic: 'total_traffic', expires_at: 'u.expires_at', last_login: 'u.last_login'
+  };
+  const orderCol = allowedSorts[sortBy] || 'total_traffic';
+  const dir = sortDir === 'ASC' ? 'ASC' : 'DESC';
   const rows = _getDb().prepare(`
     SELECT u.*, COALESCE(SUM(t.uplink),0)+COALESCE(SUM(t.downlink),0) as total_traffic
     FROM users u LEFT JOIN traffic_daily t ON u.id = t.user_id
     ${where}
-    GROUP BY u.id ORDER BY total_traffic DESC
+    GROUP BY u.id ORDER BY ${orderCol} ${dir}
     LIMIT @limit OFFSET @offset
   `).all({ limit, offset, search });
   const total = _getDb().prepare(`SELECT COUNT(*) as c FROM users u ${where}`).get({ search }).c;

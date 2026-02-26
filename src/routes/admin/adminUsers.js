@@ -62,9 +62,11 @@ router.post('/default-traffic-limit/apply', (req, res) => {
 router.get('/users', (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const search = (req.query.search || '').trim();
+  const sortBy = req.query.sortBy || 'total_traffic';
+  const sortDir = req.query.sortDir || 'DESC';
   const limit = 20;
   const offset = (page - 1) * limit;
-  const data = db.getAllUsersPaged(limit, offset, search);
+  const data = db.getAllUsersPaged(limit, offset, search, sortBy, sortDir);
   res.json({ ...data, page });
 });
 
