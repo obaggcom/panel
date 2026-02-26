@@ -62,6 +62,8 @@ function updateNode(id, fields) {
 
 function deleteNode(id) {
   _getDb().prepare('DELETE FROM nodes WHERE id = ?').run(id);
+  // 同步更新捐赠记录
+  _getDb().prepare("UPDATE node_donations SET status = 'offline', node_id = NULL WHERE node_id = ?").run(id);
 }
 
 function updateNodeAfterRotation(id, newUuid, newPort) {
