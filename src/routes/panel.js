@@ -501,6 +501,7 @@ router.get('/donate', requireAuth, (req, res) => {
     donateToken = tokenRecord.token;
   } else {
     donateToken = 'donate-' + uuidv4();
+    d.prepare("INSERT INTO donate_tokens (user_id, token, created_at) VALUES (?, ?, datetime('now', 'localtime'))").run(user.id, donateToken);
   }
 
   const wsUrl = process.env.AGENT_WS_URL || 'wss://vip.vip.sd/ws/agent';
@@ -522,7 +523,7 @@ router.post('/donate/generate', requireAuth, (req, res) => {
   const d = db.getDb();
   const token = 'donate-' + uuidv4();
   // 只记录令牌绑定用户，不插 node_donations，等 Agent 真正连上来再创建记录
-  d.prepare('INSERT OR REPLACE INTO donate_tokens (user_id, token, created_at) VALUES (?, ?, datetime("now", "localtime"))').run(user.id, token);
+  d.prepare("INSERT OR REPLACE INTO donate_tokens (user_id, token, created_at) VALUES (?, ?, datetime('now', 'localtime'))").run(user.id, token);
   db.addAuditLog(user.id, 'donate_generate', `用户 ${user.username} 生成捐赠令牌`, '');
   res.json({ ok: true, token });
 });
