@@ -64,6 +64,8 @@
         <div class="text-[11px] text-gray-300 text-right">
           <div>UUID 下次重置：<span id="uuid-reset-countdown" class="text-rose-300">计算中...</span></div>
           <div>订阅链接下次重置：<span id="sub-reset-countdown" class="text-cyan-300">计算中...</span></div>
+          <% const _resetLabels = { 0: '每7天', 1: '每7天', 2: '每15天', 3: '每月', 4: '永不' }; %>
+          <div class="text-gray-500 mt-0.5">Lv.<%= user.trust_level || 0 %><%= user.is_donor ? ' · 🎁捐赠者' : '' %> · 重置周期: <%= _resetLabels[Math.min(user.trust_level || 0, 4)] %><%= (user.trust_level < 3 && user.is_donor) ? '（捐赠者享每月重置）' : '' %></div>
         </div>
       </div>
       <div class="space-y-2">
@@ -259,7 +261,7 @@
       const d = Math.floor(s / 86400);
       const h = Math.floor((s % 86400) / 3600);
       const m = Math.floor((s % 3600) / 60);
-      if (d > 0) return `${d}天 ${h}小时 ${m}分钟`;
+      if (d > 0) return `${d}天 ${h}小时`;
       if (h > 0) return `${h}小时 ${m}分钟`;
       return `${m}分钟`;
     }
@@ -269,7 +271,14 @@
       const u = document.getElementById('uuid-reset-countdown');
       const t = document.getElementById('sub-reset-countdown');
       if (u) u.textContent = fmtCountdown(nextUuidResetAt - now);
-      if (t) t.textContent = fmtCountdown(nextSubResetAt - now);
+      if (t) {
+        if (nextSubResetAt === -1) {
+          t.textContent = '永不重置 ✨';
+          t.className = 'text-emerald-400';
+        } else {
+          t.textContent = fmtCountdown(nextSubResetAt - now);
+        }
+      }
     }
     tickResetCountdown();
     setInterval(tickResetCountdown, 30000);

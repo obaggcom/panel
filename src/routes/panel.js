@@ -71,13 +71,32 @@ function nextUuidResetAtMs(now = new Date()) {
   return shanghaiToUtcMs(y.year, y.month, y.day, 3, 0, 0);
 }
 
-function nextTokenResetAtMs(now = new Date()) {
-  const last = db.getSetting('last_token_rotate') || '2000-01-01';
+function nextTokenResetAtMs(user, now = new Date()) {
+  // 根据用户等级计算下次订阅重置时间
+  const level = user.trust_level || 0;
+  const isDonor = user.is_donor || false;
+
+  // Lv4 不重置
+  if (level >= 4) return -1;
+
+  // Lv3 或捐赠者：月初重置
+  if (level >= 3 || isDonor) {
+    const n = getNowShanghaiParts(now);
+    // 下个月1号 03:00
+    let nextMonth = n.month + 1;
+    let nextYear = n.year;
+    if (nextMonth > 12) { nextMonth = 1; nextYear++; }
+    return shanghaiToUtcMs(nextYear, nextMonth, 1, 3, 0, 0);
+  }
+
+  // Lv0-1: 7天, Lv2: 15天
+  const interval = level >= 2 ? 15 : 7;
+  const last = user.last_token_reset || '2000-01-01';
   const [y,m,d] = String(last).split('-').map(v => parseInt(v));
   if (!y || !m || !d) return nextUuidResetAtMs(now);
   const last3 = shanghaiToUtcMs(y, m, d, 3, 0, 0);
   const next = new Date(last3);
-  next.setUTCDate(next.getUTCDate() + 7);
+  next.setUTCDate(next.getUTCDate() + interval);
   return next.getTime();
 }
 
@@ -132,7 +151,7 @@ router.get('/', requireAuth, (req, res) => {
     subUrl6: `${req.protocol}://${req.get('host')}/sub6/${user.sub_token}`,
     subUrl6: `${req.protocol}://${req.get('host')}/sub6/${user.sub_token}`,
     nextUuidResetAt: nextUuidResetAtMs(),
-    nextSubResetAt: nextTokenResetAtMs(),
+    nextSubResetAt: nextTokenResetAtMs(user),
     announcement: db.getSetting('announcement') || '',
     expiresAt: user.expires_at || null,
   });
