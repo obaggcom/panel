@@ -189,6 +189,34 @@
     </form>
   </details>
 
+  <!-- 双协议一键部署（VLESS + SS） -->
+  <details class="glass rounded-2xl">
+    <summary class="text-amber-400 text-sm cursor-pointer hover:text-amber-300 p-4">⚡ 双协议部署（VLESS IPv4 + SS IPv6 同机）</summary>
+    <form method="POST" action="/admin/api/nodes/deploy-dual" class="px-4 pb-4 grid grid-cols-2 gap-3" onsubmit="return validateDualDeployForm(this)">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="text" name="host" placeholder="服务器 IP *" required class="bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+      <input type="password" name="ssh_password" placeholder="SSH 密码 *" required minlength="1" class="bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+      <input type="number" name="ssh_port" placeholder="SSH 端口（默认 22）" min="1" max="65535" class="bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+      <input type="text" name="ssh_user" placeholder="SSH 用户名（默认 root）" class="bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+      <select name="ss_method" class="bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm col-span-2">
+        <option value="aes-256-gcm">SS 加密：aes-256-gcm（推荐）</option>
+        <option value="aes-128-gcm">aes-128-gcm</option>
+        <option value="chacha20-ietf-poly1305">chacha20-ietf-poly1305</option>
+      </select>
+      <details class="col-span-2">
+        <summary class="text-gray-500 text-xs cursor-pointer hover:text-gray-300">🔗 Socks5 落地（可选）</summary>
+        <div class="grid grid-cols-2 gap-3 mt-2">
+          <input type="text" name="socks5_host" placeholder="Socks5 地址" class="bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+          <input type="number" name="socks5_port" placeholder="端口（默认 1080）" min="1" max="65535" class="bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+          <input type="text" name="socks5_user" placeholder="用户名" class="bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+          <input type="password" name="socks5_pass" placeholder="密码" class="bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+        </div>
+      </details>
+      <p class="text-[11px] text-gray-500 col-span-2">一台服务器同时部署 VLESS（IPv4）和 Shadowsocks（IPv6），需要服务器同时有 IPv4 和 IPv6</p>
+      <button class="bg-amber-600 hover:bg-amber-500 text-white py-2.5 rounded-xl text-sm col-span-2 transition font-medium" id="deploy-dual-btn">⚡ 双协议部署</button>
+    </form>
+  </details>
+
   <!-- IPv6 SS 自动部署 -->
   <details class="glass rounded-2xl">
     <summary class="text-cyan-400 text-sm cursor-pointer hover:text-cyan-300 p-4">➕ 部署 IPv6 SS 节点（SSH 自动部署）</summary>
@@ -242,6 +270,18 @@ function validateSsDeployForm(form) {
   if (!host) { toast('请填写服务器 IP', 2500, 'error'); form.host.focus(); return false; }
   if (!pwd) { toast('请填写 SSH 密码', 2500, 'error'); form.ssh_password.focus(); return false; }
   const btn = document.getElementById('deploy-ss-btn');
+  btn.textContent = '⏳ 部署中...';
+  btn.classList.add('btn-loading');
+  return true;
+}
+
+// 双协议部署表单校验
+function validateDualDeployForm(form) {
+  const host = form.host.value.trim();
+  const pwd = form.ssh_password.value;
+  if (!host) { toast('请填写服务器 IP', 2500, 'error'); form.host.focus(); return false; }
+  if (!pwd) { toast('请填写 SSH 密码', 2500, 'error'); form.ssh_password.focus(); return false; }
+  const btn = document.getElementById('deploy-dual-btn');
   btn.textContent = '⏳ 部署中...';
   btn.classList.add('btn-loading');
   return true;

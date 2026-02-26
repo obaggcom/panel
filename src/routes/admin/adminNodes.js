@@ -16,6 +16,23 @@ function isValidHost(host) {
 
 const router = express.Router();
 
+router.post('/nodes/deploy-dual', (req, res) => {
+  const { host, ssh_port, ssh_user, ssh_password, ss_method, socks5_host, socks5_port, socks5_user, socks5_pass } = req.body;
+  if (!host || !ssh_password) return res.redirect('/admin#nodes');
+
+  db.addAuditLog(req.user.id, 'node_deploy_dual_start', `开始双协议部署: ${host}`, req.ip);
+
+  deployService.deployDualNode({
+    host, ssh_port: parseInt(ssh_port) || 22, ssh_user: ssh_user || 'root', ssh_password,
+    ss_method: ss_method || 'aes-256-gcm',
+    socks5_host: socks5_host || null, socks5_port: parseInt(socks5_port) || 1080,
+    socks5_user: socks5_user || null, socks5_pass: socks5_pass || null,
+    triggered_by: req.user.id
+  }, db).catch(err => console.error('[双协议部署异常]', err));
+
+  res.redirect('/admin?msg=deploying#nodes');
+});
+
 router.post('/nodes/deploy-ss', (req, res) => {
   const { host, ssh_port, ssh_user, ssh_password, ss_method } = req.body;
   if (!host || !ssh_password) return res.redirect('/admin#nodes');

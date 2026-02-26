@@ -208,6 +208,38 @@ async function syncNodeConfig(node, db) {
   const userUuids = db.getNodeAllUserUuids(node.id);
   if (userUuids.length === 0) return false;
 
+  // SS 节点：使用 SS 多用户配置
+  if (node.protocol === 'ss') {
+    const clients = userUuids.map(u => ({
+      password: u.uuid, email: `user-${u.user_id}@panel`
+    }));
+    const config = buildSsXrayConfig(node.port, clients, node.ss_method || 'aes-256-gcm');
+
+    // 如果有同机 VLESS 伙伴节点，生成双协议配置
+    const peerNode = findPeerNode(node, db);
+    if (peerNode) {
+      const vlessUuids = db.getNodeAllUserUuids(peerNode.id);
+      if (vlessUuids.length > 0) {
+        const vlessClients = vlessUuids.map(u => ({
+          id: u.uuid, level: 0, email: `user-${u.user_id}@panel`
+        }));
+        let outbounds;
+        if (peerNode.socks5_host) {
+          const s = { address: peerNode.socks5_host, port: peerNode.socks5_port || 1080 };
+          if (peerNode.socks5_user) s.users = [{ user: peerNode.socks5_user, pass: peerNode.socks5_pass || '' }];
+          outbounds = [{ protocol: 'socks', tag: 'socks5-out', settings: { servers: [s] } }, { protocol: 'freedom', tag: 'direct' }];
+        } else {
+          outbounds = [{ protocol: 'freedom', tag: 'direct' }, { protocol: 'blackhole', tag: 'blocked' }];
+        }
+        const realityOpts = peerNode.reality_private_key ? { privateKey: peerNode.reality_private_key, sni: peerNode.sni || 'www.microsoft.com', shortId: peerNode.reality_short_id } : null;
+        const dualConfig = buildDualXrayConfig(peerNode.port, node.port, vlessClients, clients, node.ss_method || 'aes-256-gcm', outbounds, realityOpts);
+        return await pushConfigToNode(node, dualConfig);
+      }
+    }
+    return await pushConfigToNode(node, config);
+  }
+
+  // VLESS 节点
   const clients = userUuids.map(u => ({
     id: u.uuid, level: 0, email: `user-${u.user_id}@panel`
   }));
@@ -228,8 +260,33 @@ async function syncNodeConfig(node, db) {
   }
 
   const realityOpts = node.reality_private_key ? { privateKey: node.reality_private_key, sni: node.sni || 'www.microsoft.com', shortId: node.reality_short_id } : null;
+
+  // 如果有同机 SS 伙伴节点，生成双协议配置
+  const peerNode = findPeerNode(node, db);
+  if (peerNode) {
+    const ssUuids = db.getNodeAllUserUuids(peerNode.id);
+    if (ssUuids.length > 0) {
+      const ssClients = ssUuids.map(u => ({
+        password: u.uuid, email: `user-${u.user_id}@panel`
+      }));
+      const dualConfig = buildDualXrayConfig(node.port, peerNode.port, clients, ssClients, peerNode.ss_method || 'aes-256-gcm', outbounds, realityOpts);
+      return await pushConfigToNode(node, dualConfig);
+    }
+  }
+
   const config = buildXrayConfig(node.port, clients, outbounds, realityOpts);
   return await pushConfigToNode(node, config);
+}
+
+// 查找同机伙伴节点（同 ssh_host 的另一个协议节点）
+function findPeerNode(node, db) {
+  const sshHost = node.ssh_host || node.host;
+  const allNodes = db.getAllNodes(true);
+  return allNodes.find(n =>
+    n.id !== node.id &&
+    (n.ssh_host || n.host) === sshHost &&
+    n.protocol !== node.protocol
+  ) || null;
 }
 
 // 同步所有活跃节点的配置
@@ -469,6 +526,99 @@ async function installAgentOnNode(ssh, nodeId, db) {
 
 // ========== IPv6 SS 自动部署 ==========
 
+// 生成 SS 多用户 xray 配置（带 stats）
+function buildSsXrayConfig(port, clients, ssMethod) {
+  return {
+    log: { loglevel: 'warning' },
+    stats: {},
+    api: { tag: 'api', services: ['StatsService'] },
+    policy: {
+      levels: { '0': { statsUserUplink: true, statsUserDownlink: true } },
+      system: { statsInboundUplink: true, statsInboundDownlink: true, statsOutboundUplink: true, statsOutboundDownlink: true }
+    },
+    inbounds: [
+      {
+        port, listen: '::', protocol: 'shadowsocks', tag: 'ss-in',
+        settings: {
+          clients: clients.map(c => ({
+            password: c.password, email: c.email, method: ssMethod, level: 0
+          })),
+          network: 'tcp,udp'
+        }
+      },
+      {
+        listen: '127.0.0.1', port: 10085,
+        protocol: 'dokodemo-door', tag: 'api-in',
+        settings: { address: '127.0.0.1' }
+      }
+    ],
+    outbounds: [
+      { tag: 'direct', protocol: 'freedom' },
+      { tag: 'block', protocol: 'blackhole' }
+    ],
+    routing: {
+      rules: [
+        { type: 'field', inboundTag: ['api-in'], outboundTag: 'api' }
+      ]
+    }
+  };
+}
+
+// 生成双协议 xray 配置（VLESS IPv4 + SS IPv6）
+function buildDualXrayConfig(vlessPort, ssPort, vlessClients, ssClients, ssMethod, outbounds, realityOpts) {
+  const vlessStreamSettings = { network: 'tcp', security: 'reality' };
+  const vlessClientsWithFlow = vlessClients.map(c => ({ ...c, flow: 'xtls-rprx-vision' }));
+  if (realityOpts) {
+    vlessStreamSettings.realitySettings = {
+      show: false,
+      dest: `${realityOpts.sni}:443`,
+      xver: 0,
+      serverNames: [realityOpts.sni],
+      privateKey: realityOpts.privateKey,
+      shortIds: [realityOpts.shortId]
+    };
+  }
+  return {
+    log: { loglevel: 'warning' },
+    stats: {},
+    api: { tag: 'api', services: ['StatsService'] },
+    policy: {
+      levels: { '0': { statsUserUplink: true, statsUserDownlink: true } },
+      system: { statsInboundUplink: true, statsInboundDownlink: true, statsOutboundUplink: true, statsOutboundDownlink: true }
+    },
+    inbounds: [
+      {
+        port: vlessPort, listen: '0.0.0.0', protocol: 'vless', tag: 'vless-in',
+        settings: { clients: vlessClientsWithFlow, decryption: 'none' },
+        streamSettings: vlessStreamSettings
+      },
+      {
+        port: ssPort, listen: '::', protocol: 'shadowsocks', tag: 'ss-in',
+        settings: {
+          clients: ssClients.map(c => ({
+            password: c.password, email: c.email, method: ssMethod, level: 0
+          })),
+          network: 'tcp,udp'
+        }
+      },
+      {
+        listen: '127.0.0.1', port: 10085,
+        protocol: 'dokodemo-door', tag: 'api-in',
+        settings: { address: '127.0.0.1' }
+      }
+    ],
+    outbounds: outbounds,
+    routing: {
+      rules: [
+        { type: 'field', inboundTag: ['api-in'], outboundTag: 'api' },
+        ...(outbounds[0]?.tag === 'socks5-out'
+          ? [{ type: 'field', outboundTag: 'socks5-out', network: 'tcp,udp' }]
+          : [])
+      ]
+    }
+  };
+}
+
 async function deploySsNode(sshInfo, db) {
   // 确保数据库已初始化
   if (typeof db.getDb === 'function') db.getDb();
@@ -525,20 +675,16 @@ async function deploySsNode(sshInfo, db) {
       throw new Error('xray 安装失败: ' + (installResult.stderr || installResult.stdout).substring(0, 200));
     }
 
-    // 生成 SS 配置
-    const config = {
-      log: { loglevel: 'warning' },
-      inbounds: [{
-        tag: 'ss-in', port, listen: '::',
-        protocol: 'shadowsocks',
-        settings: { method: ssMethod, password: ssPassword, network: 'tcp,udp' }
-      }],
-      outbounds: [
-        { tag: 'direct', protocol: 'freedom' },
-        { tag: 'block', protocol: 'blackhole' }
-      ]
-    };
+    // 为所有现有用户在新节点生成 UUID（用作 SS 密码）
+    db.ensureAllUsersHaveUuid(nodeId);
 
+    // 生成多用户 SS 配置（带 stats）
+    const userUuids = db.getNodeAllUserUuids(nodeId);
+    const clients = userUuids.length > 0
+      ? userUuids.map(u => ({ password: u.uuid, email: `user-${u.user_id}@panel` }))
+      : [{ password: ssPassword, email: 'default@panel' }];
+
+    const config = buildSsXrayConfig(port, clients, ssMethod);
     const configJson = JSON.stringify(config, null, 2);
     await ssh.execCommand('mkdir -p /usr/local/etc/xray');
     await sftpWriteFile(ssh, '/usr/local/etc/xray/config.json', configJson);
@@ -577,6 +723,172 @@ async function deploySsNode(sshInfo, db) {
   }
 }
 
+// ========== 双协议部署（VLESS IPv4 + SS IPv6 同机）==========
+
+async function deployDualNode(sshInfo, db) {
+  if (typeof db.getDb === 'function') db.getDb();
+
+  const vlessPort = randomPort();
+  const ssPort = randomPort(10000, 60000);
+  const uuid = uuidv4();
+  const ssPassword = crypto.randomBytes(16).toString('base64');
+  const ssMethod = sshInfo.ss_method || 'aes-256-gcm';
+
+  const geo = await detectRegion(sshInfo.host);
+  let displayGeo = geo;
+  let isHomeNetwork = false;
+  if (sshInfo.socks5_host) {
+    isHomeNetwork = true;
+    const socks5Geo = await detectRegion(sshInfo.socks5_host);
+    if (socks5Geo.city && socks5Geo.city !== 'Unknown' && socks5Geo.cityCN !== '未知') displayGeo = socks5Geo;
+  }
+
+  const existingNodes = db.getAllNodes();
+  const vlessName = generateNodeName(displayGeo, existingNodes, isHomeNetwork);
+  // SS 节点名添加 IPv6 标记
+  const ssName = vlessName.replace(/-([^-]+)$/, '-$1') + '⁶';
+  const region = `${displayGeo.emoji} ${displayGeo.cityCN}`;
+
+  // 先添加 VLESS 节点
+  const vlessResult = db.addNode({
+    name: vlessName, host: sshInfo.host, port: vlessPort, uuid,
+    protocol: 'vless', ip_version: 4,
+    ssh_host: sshInfo.host, ssh_port: sshInfo.ssh_port || 22,
+    ssh_user: sshInfo.ssh_user || 'root', ssh_password: sshInfo.ssh_password,
+    ssh_key_path: sshInfo.ssh_key_path,
+    socks5_host: sshInfo.socks5_host || null, socks5_port: parseInt(sshInfo.socks5_port) || 1080,
+    socks5_user: sshInfo.socks5_user || null, socks5_pass: sshInfo.socks5_pass || null,
+    region, remark: '⏳ 部署中...', is_active: 0
+  });
+  const vlessNodeId = vlessResult.lastInsertRowid;
+
+  // 添加 SS 节点（host 后面会更新为 IPv6）
+  const ssResult = db.addNode({
+    name: ssName, host: sshInfo.host, port: ssPort,
+    uuid: '00000000-0000-0000-0000-000000000000',
+    protocol: 'ss', ip_version: 6, ss_method: ssMethod, ss_password: ssPassword,
+    ssh_host: sshInfo.host, ssh_port: sshInfo.ssh_port || 22,
+    ssh_user: sshInfo.ssh_user || 'root', ssh_password: sshInfo.ssh_password,
+    region, remark: '⏳ 部署中...', is_active: 0
+  });
+  const ssNodeId = ssResult.lastInsertRowid;
+
+  // 为所有用户生成 UUID
+  db.ensureAllUsersHaveUuid(vlessNodeId);
+  db.ensureAllUsersHaveUuid(ssNodeId);
+
+  const ssh = new NodeSSH();
+  try {
+    const connectOpts = {
+      host: sshInfo.host, port: sshInfo.ssh_port || 22,
+      username: sshInfo.ssh_user || 'root',
+    };
+    if (sshInfo.ssh_key_path) connectOpts.privateKeyPath = sshInfo.ssh_key_path;
+    else if (sshInfo.ssh_password) connectOpts.password = sshInfo.ssh_password;
+
+    console.log(`[双协议部署] ${vlessName} + ${ssName} (${sshInfo.host}) 开始...`);
+    await ssh.connect(connectOpts);
+
+    // 检测 IPv6 地址
+    const ipv6Result = await ssh.execCommand("ip -6 addr show scope global | grep inet6 | head -1 | awk '{print $2}' | cut -d/ -f1");
+    const ipv6Addr = (ipv6Result.stdout || '').trim();
+    if (!ipv6Addr) {
+      throw new Error('服务器没有 IPv6 地址，无法进行双协议部署');
+    }
+    console.log(`[双协议部署] 检测到 IPv6: ${ipv6Addr}`);
+    db.updateNode(ssNodeId, { host: ipv6Addr });
+
+    // 安装 xray
+    const installScript = fs.readFileSync(path.join(__dirname, '..', '..', 'templates', 'install-xray.sh'), 'utf8').trim();
+    const installResult = await ssh.execCommand(installScript, { execOptions: { timeout: 180000 } });
+    if (!installResult.stdout.includes('INSTALL_OK')) {
+      throw new Error('xray 安装失败: ' + (installResult.stderr || installResult.stdout).substring(0, 200));
+    }
+
+    // 生成 Reality 密钥
+    const keyResult = await ssh.execCommand('xray x25519');
+    const output = keyResult.stdout + '\n' + keyResult.stderr;
+    const privMatch = output.match(/Private\s*[Kk]ey:\s*(\S+)/);
+    const pubMatch = output.match(/Public\s*[Kk]ey:\s*(\S+)/) || output.match(/Password:\s*(\S+)/);
+    if (!privMatch || !pubMatch) throw new Error('Reality 密钥生成失败');
+    const realityPrivateKey = privMatch[1];
+    const realityPublicKey = pubMatch[1];
+    const realityShortId = crypto.randomBytes(4).toString('hex');
+    const sni = 'www.microsoft.com';
+
+    db.updateNode(vlessNodeId, { reality_private_key: realityPrivateKey, reality_public_key: realityPublicKey, reality_short_id: realityShortId, sni });
+
+    // 构建双协议配置
+    const vlessUuids = db.getNodeAllUserUuids(vlessNodeId);
+    const vlessClients = vlessUuids.length > 0
+      ? vlessUuids.map(u => ({ id: u.uuid, level: 0, email: `user-${u.user_id}@panel` }))
+      : [{ id: uuid, level: 0, email: 'default@panel' }];
+
+    const ssUuids = db.getNodeAllUserUuids(ssNodeId);
+    const ssClients = ssUuids.length > 0
+      ? ssUuids.map(u => ({ password: u.uuid, email: `user-${u.user_id}@panel` }))
+      : [{ password: ssPassword, email: 'default@panel' }];
+
+    let outbounds;
+    if (sshInfo.socks5_host) {
+      let s = { address: sshInfo.socks5_host, port: parseInt(sshInfo.socks5_port) || 1080 };
+      if (sshInfo.socks5_user) s.users = [{ user: sshInfo.socks5_user, pass: sshInfo.socks5_pass || '' }];
+      outbounds = [{ protocol: 'socks', tag: 'socks5-out', settings: { servers: [s] } }, { protocol: 'freedom', tag: 'direct' }];
+    } else {
+      outbounds = [{ protocol: 'freedom', tag: 'direct' }, { protocol: 'blackhole', tag: 'blocked' }];
+    }
+
+    const config = buildDualXrayConfig(vlessPort, ssPort, vlessClients, ssClients, ssMethod, outbounds, { privateKey: realityPrivateKey, sni, shortId: realityShortId });
+    const configJson = JSON.stringify(config, null, 2);
+
+    await ssh.execCommand('mkdir -p /usr/local/etc/xray');
+    await sftpWriteFile(ssh, '/usr/local/etc/xray/config.json', configJson);
+
+    // 开放两个端口
+    await ssh.execCommand(`
+      for P in ${vlessPort} ${ssPort}; do
+        iptables -C INPUT -p tcp --dport $P -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport $P -j ACCEPT
+        iptables -C INPUT -p udp --dport $P -j ACCEPT 2>/dev/null || iptables -I INPUT -p udp --dport $P -j ACCEPT
+        ip6tables -C INPUT -p tcp --dport $P -j ACCEPT 2>/dev/null || ip6tables -I INPUT -p tcp --dport $P -j ACCEPT
+        ip6tables -C INPUT -p udp --dport $P -j ACCEPT 2>/dev/null || ip6tables -I INPUT -p udp --dport $P -j ACCEPT
+      done
+      command -v netfilter-persistent &>/dev/null && netfilter-persistent save || true
+    `);
+
+    // 启动 xray
+    const startResult = await ssh.execCommand('systemctl enable xray && systemctl restart xray && sleep 2 && systemctl is-active --quiet xray && echo DEPLOY_OK || echo DEPLOY_FAIL');
+
+    if (startResult.stdout.includes('DEPLOY_OK')) {
+      db.updateNode(vlessNodeId, { is_active: 1, remark: sshInfo.socks5_host ? '🏠 家宽落地' : '' });
+      db.updateNode(ssNodeId, { is_active: 1, remark: '' });
+      const msg = `双协议部署成功: ${vlessName} (VLESS ${sshInfo.host}:${vlessPort}) + ${ssName} (SS IPv6 ${ipv6Addr}:${ssPort})`;
+      db.addAuditLog(sshInfo.triggered_by || null, 'node_deploy_dual', msg, 'system');
+      console.log(`[双协议部署成功] ${msg}`);
+      try { notify.deploy(vlessName, true, `双协议 | VLESS:${vlessPort} SS-IPv6:${ssPort}`); } catch {}
+
+      // 安装 Agent（用 VLESS 节点 ID）
+      try { await installAgentOnNode(ssh, vlessNodeId, db); } catch (e) {
+        console.error(`[Agent安装] ${vlessName} 失败: ${e.message}`);
+      }
+    } else {
+      const errMsg = (startResult.stderr || startResult.stdout).substring(0, 200);
+      db.updateNode(vlessNodeId, { remark: `❌ 部署失败: ${errMsg}` });
+      db.updateNode(ssNodeId, { remark: `❌ 部署失败: ${errMsg}` });
+      db.addAuditLog(sshInfo.triggered_by || null, 'node_deploy_dual_fail', `双协议部署失败: ${errMsg}`, 'system');
+      console.error(`[双协议部署失败] ${errMsg}`);
+      try { notify.deploy(vlessName, false, errMsg); } catch {}
+    }
+  } catch (err) {
+    db.updateNode(vlessNodeId, { remark: `❌ ${err.message}` });
+    db.updateNode(ssNodeId, { remark: `❌ ${err.message}` });
+    db.addAuditLog(sshInfo.triggered_by || null, 'node_deploy_dual_fail', `双协议部署异常: ${err.message}`, 'system');
+    console.error(`[双协议部署异常] ${err.message}`);
+    try { notify.deploy(vlessName, false, err.message); } catch {}
+  } finally {
+    ssh.dispose();
+  }
+}
+
 // syncAllNodesConfig 对外暴露去抖版本
 const syncAllNodesConfig = syncAllNodesConfigDebounced;
-module.exports = { deployNode, deploySsNode, detectRegion, generateNodeName, syncNodeConfig, syncAllNodesConfig, pushConfigToNode };
+module.exports = { deployNode, deploySsNode, deployDualNode, detectRegion, generateNodeName, syncNodeConfig, syncAllNodesConfig, pushConfigToNode };

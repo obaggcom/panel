@@ -155,9 +155,9 @@ function fmtYaml(v) {
 
 // ========== Shadowsocks 订阅生成 ==========
 
-function buildSsLink(node) {
+function buildSsLink(node, userPassword) {
   const method = node.ss_method || 'aes-256-gcm';
-  const password = node.ss_password || '';
+  const password = userPassword || node.ss_password || '';
   const userinfo = Buffer.from(`${method}:${password}`).toString('base64');
   // IPv6 地址用方括号包裹
   const host = node.host.includes(':') ? `[${node.host}]` : node.host;
@@ -181,7 +181,7 @@ function generateV2raySsSub(nodes, trafficInfo) {
       infoLinks.push(buildSsInfoLink(`📊 已用: ${formatBytes(used)} | 无限制`));
     }
   }
-  const links = [...infoLinks, ...nodes.map(n => buildSsLink(n))].join('\n');
+  const links = [...infoLinks, ...nodes.map(n => buildSsLink(n, n.userPassword))].join('\n');
   return Buffer.from(links).toString('base64');
 }
 
@@ -190,7 +190,7 @@ function generateClashSsSub(nodes) {
     name: n.name, type: 'ss',
     server: n.host, port: n.port,
     cipher: n.ss_method || 'aes-256-gcm',
-    password: n.ss_password || '',
+    password: n.userPassword || n.ss_password || '',
     udp: true
   }));
 
@@ -212,7 +212,7 @@ function generateSingboxSsSub(nodes) {
     tag: n.name, type: 'shadowsocks',
     server: n.host, server_port: n.port,
     method: n.ss_method || 'aes-256-gcm',
-    password: n.ss_password || ''
+    password: n.userPassword || n.ss_password || ''
   }));
 
   const tags = nodes.map(n => n.name);

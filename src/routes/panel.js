@@ -91,7 +91,7 @@ router.get('/', requireAuth, (req, res) => {
 
   const userNodes = nodes.map(n => {
     const userUuid = db.getUserNodeUuid(user.id, n.id);
-    return { ...n, link: n.protocol === 'ss' ? buildSsLink(n) : buildVlessLink(n, userUuid.uuid) };
+    return { ...n, link: n.protocol === 'ss' ? buildSsLink(n, userUuid.uuid) : buildVlessLink(n, userUuid.uuid) };
   });
 
   // 查询节点 AI 操作标签
@@ -364,10 +364,16 @@ router.get('/sub6/:token', subLimiter, (req, res) => {
 
   const isVip = db.isInWhitelist(user.nodeloc_id);
   // 只取 IPv6 + SS 节点
-  const nodes = db.getAllNodes(true).filter(n =>
+  const rawNodes = db.getAllNodes(true).filter(n =>
     n.ip_version === 6 && n.protocol === 'ss' &&
     (isVip || user.trust_level >= (n.min_level || 0))
   );
+
+  // 为每个 SS 节点注入用户独立密码（复用 user_node_uuid 的 uuid 作为 SS 密码）
+  const nodes = rawNodes.map(n => {
+    const userUuid = db.getUserNodeUuid(user.id, n.id);
+    return { ...n, userPassword: userUuid.uuid };
+  });
 
   const traffic = db.getUserTraffic(user.id);
   const trafficLimit = user.traffic_limit || 0;
