@@ -303,7 +303,7 @@
     .pb-event-empty{color:#6b7280;font-size:11px;text-align:center;padding:8px 0}
     @media(max-width:400px){.sub-btn-row .bg-rose-600,.sub-btn-row .bg-indigo-600{padding-left:0.75rem;padding-right:0.75rem;font-size:0.75rem}}
   </style>
-  <div id="peach-bubble" onclick="togglePeachPanel()" role="button" aria-label="蜜桃酱状态面板" tabindex="0">
+  <div id="peach-bubble" onclick="togglePeachPanel(event)" role="button" aria-label="蜜桃酱状态面板" tabindex="0">
     🍑
     <span class="dot" aria-hidden="true"></span>
   </div>
@@ -368,7 +368,8 @@
     loadPeach();
     setInterval(loadPeach, 60000);
   })();
-  function togglePeachPanel() {
+  function togglePeachPanel(e) {
+    if (e) e.stopPropagation();
     const p = document.getElementById('peach-panel');
     p.style.display = p.style.display === 'none' ? 'block' : 'none';
   }
