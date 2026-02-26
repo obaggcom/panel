@@ -53,11 +53,11 @@
           ✅ Agent 已连接，等待管理员审核
         </div>
       <% } %>
-      <div class="relative">
-        <pre class="bg-black/40 rounded-xl p-4 pr-20 text-green-400 text-xs overflow-x-auto whitespace-pre-wrap break-all select-all" id="install-cmd"><%= installCmd %></pre>
-        <button onclick="copyCmd()" class="absolute top-3 right-3 text-xs px-3 py-1.5 rounded-lg bg-rose-500 text-white hover:bg-rose-400 transition shadow-lg" id="copy-btn">复制</button>
+      <pre class="bg-black/40 rounded-xl p-4 text-green-400 text-xs overflow-x-auto whitespace-pre-wrap break-all select-all" id="install-cmd"><%= installCmd %></pre>
+      <div class="flex items-center gap-3 mt-3">
+        <button onclick="copyCmd()" class="text-xs px-4 py-2 rounded-lg bg-rose-500 text-white hover:bg-rose-400 transition shadow-lg font-medium" id="copy-btn">📋 复制命令</button>
+        <span class="text-gray-500 text-xs">在服务器上执行此命令，Agent 连接成功后将自动提交审核</span>
       </div>
-      <p class="text-gray-500 text-xs mt-6">在服务器上执行此命令，Agent 连接成功后将自动提交审核</p>
     </div>
 
     <!-- 我的捐赠 -->
