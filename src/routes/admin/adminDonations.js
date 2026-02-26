@@ -45,10 +45,11 @@ router.post('/donations/:id/approve', async (req, res) => {
     // 创建节点记录
     const agentToken = uuidv4();
     const nodeUuid = uuidv4();
+    const randomPort = 10000 + Math.floor(Math.random() * 50000); // 10000-59999 随机端口
     const nodeResult = d.prepare(`
       INSERT INTO nodes (name, host, port, uuid, is_active, agent_token, group_name, remark, is_donation)
-      VALUES (?, ?, 443, ?, 1, ?, ?, '🎁 捐赠节点', 1)
-    `).run(nodeName, donation.server_ip, nodeUuid, agentToken, group_name || '捐赠节点');
+      VALUES (?, ?, ?, ?, 1, ?, ?, '🎁 捐赠节点', 1)
+    `).run(nodeName, donation.server_ip, randomPort, nodeUuid, agentToken, group_name || '捐赠节点');
 
     const nodeId = nodeResult.lastInsertRowid;
 
