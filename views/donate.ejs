@@ -14,25 +14,25 @@
   <main class="max-w-4xl mx-auto px-4 sm:px-6 py-8 space-y-6">
 
     <!-- 标题 -->
-    <div class="text-center">
-      <h1 class="text-white text-2xl font-bold">🍑 共建蜜桃网络</h1>
-      <p class="text-gray-400 text-sm mt-2">一台闲置的服务器，就能让更多人自由上网</p>
+    <div class="text-center py-2">
+      <h1 class="text-2xl sm:text-3xl font-bold donate-title">🍑 共建蜜桃网络</h1>
+      <p class="text-gray-500 text-sm mt-2">一台闲置的服务器，就能让更多人自由上网</p>
     </div>
 
     <!-- 说明卡片 -->
     <div class="glass rounded-2xl p-6 space-y-4">
-      <h2 class="text-white font-semibold">✨ 三分钟，一行命令</h2>
-      <div class="space-y-3 text-gray-400 text-sm leading-relaxed">
-        <div class="flex gap-3">
-          <span class="text-rose-400 font-bold shrink-0">①</span>
+      <h2 class="text-white font-semibold text-base">✨ 三分钟，一行命令</h2>
+      <div class="space-y-3 text-gray-300 text-sm leading-relaxed">
+        <div class="flex gap-3 items-start">
+          <span class="step-badge shrink-0">1</span>
           <span>选择协议，复制安装命令</span>
         </div>
-        <div class="flex gap-3">
-          <span class="text-rose-400 font-bold shrink-0">②</span>
+        <div class="flex gap-3 items-start">
+          <span class="step-badge shrink-0">2</span>
           <span>在服务器上以 root 执行，剩下的交给蜜桃酱</span>
         </div>
-        <div class="flex gap-3">
-          <span class="text-rose-400 font-bold shrink-0">③</span>
+        <div class="flex gap-3 items-start">
+          <span class="step-badge shrink-0">3</span>
           <span>自动部署、自动审核、自动上线 — 全程无需人工干预</span>
         </div>
       </div>
@@ -73,9 +73,9 @@
         <p class="text-gray-600 text-[11px]" id="proto-hint">VLESS Reality 协议，使用服务器的 IPv4 地址</p>
       </div>
 
-      <pre class="bg-black/40 rounded-xl p-4 text-green-400 text-xs overflow-x-auto whitespace-pre-wrap break-all select-all" id="install-cmd"><%= installCmd %></pre>
+      <pre class="cmd-box rounded-xl p-4 text-green-400 text-xs overflow-x-auto whitespace-pre-wrap break-all select-all" id="install-cmd"><%= installCmd %></pre>
       <div class="flex items-center gap-3 mt-3">
-        <button onclick="copyCmd()" class="text-xs px-4 py-2 rounded-lg bg-rose-500 text-white hover:bg-rose-400 transition shadow-lg font-medium" id="copy-btn">📋 复制命令</button>
+        <button onclick="copyCmd()" class="copy-cta text-sm px-5 py-2.5 rounded-xl text-white font-medium transition" id="copy-btn">📋 复制命令</button>
         <span class="text-gray-500 text-xs">粘贴到服务器回车即可，蜜桃酱会自动接管后续流程</span>
       </div>
     </div>
@@ -133,9 +133,50 @@
   <footer class="text-center py-6 text-gray-600 text-xs">每一台服务器，都是一份善意 · 🍑 蜜桃酱</footer>
 
   <style nonce="<%= nonce %>">
-    .proto-btn { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); color: #9ca3af; }
-    .proto-btn:hover { background: rgba(255,255,255,0.06); color: #fff; }
-    .proto-active { background: rgba(244,63,94,0.2) !important; border-color: rgba(244,63,94,0.4) !important; color: #fff !important; }
+    /* 标题渐变 */
+    .donate-title {
+      background: linear-gradient(135deg, #fff 0%, #fda4af 50%, #fb923c 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    /* 步骤徽章 */
+    .step-badge {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 22px; height: 22px; border-radius: 50%;
+      background: linear-gradient(135deg, #f43f5e, #e11d48);
+      color: #fff; font-size: 11px; font-weight: 700;
+      box-shadow: 0 2px 8px rgba(244,63,94,0.3);
+      margin-top: 1px;
+    }
+    /* 协议按钮 */
+    .proto-btn {
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12);
+      color: #d1d5db; cursor: pointer;
+    }
+    .proto-btn:hover { background: rgba(255,255,255,0.09); color: #fff; border-color: rgba(255,255,255,0.2); }
+    .proto-active {
+      background: rgba(244,63,94,0.18) !important;
+      border-color: rgba(244,63,94,0.5) !important;
+      color: #fff !important;
+      box-shadow: 0 0 12px rgba(244,63,94,0.15);
+    }
+    /* 命令框 */
+    .cmd-box {
+      background: rgba(0,0,0,0.5);
+      border: 1px solid rgba(74,222,128,0.12);
+      box-shadow: inset 0 1px 0 rgba(74,222,128,0.05);
+    }
+    /* 复制按钮 CTA */
+    .copy-cta {
+      background: linear-gradient(135deg, #f43f5e, #e11d48);
+      box-shadow: 0 4px 20px rgba(244,63,94,0.35);
+    }
+    .copy-cta:hover {
+      box-shadow: 0 6px 28px rgba(244,63,94,0.5);
+      transform: translateY(-1px);
+    }
+    .copy-cta:active { transform: translateY(0); }
   </style>
   <script nonce="<%= nonce %>">
     const protoHints = {
