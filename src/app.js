@@ -225,25 +225,91 @@ cron.schedule('0 4 * * *', async () => {
         db.addAuditLog(null, 'donate_cleanup', `自动删除离线捐赠节点: ${dn.node_name}, 捐赠者: ${username}, 离线${Math.floor(hoursSince)}h`, 'system');
       }
 
-      // 检查捐赠者是否还有在线节点，没有则回收标识
-      const donorUsers = d.prepare('SELECT DISTINCT user_id FROM node_donations WHERE status = ?').all('online');
+      // 检查捐赠者是否还有在线节点；离线超过 30 分钟再回收标识与权益
+      const donorUsers = d.prepare(`
+        SELECT DISTINCT user_id FROM node_donations WHERE status = 'online'
+        UNION
+        SELECT id as user_id FROM users WHERE is_donor = 1
+      `).all();
+
       for (const { user_id } of donorUsers) {
         const activeCount = d.prepare(`
           SELECT COUNT(*) as cnt FROM node_donations nd
           JOIN nodes n ON nd.node_id = n.id
           WHERE nd.user_id = ? AND nd.status = 'online' AND n.is_active = 1
         `).get(user_id)?.cnt || 0;
-        if (activeCount === 0) {
-          d.prepare('UPDATE users SET is_donor = 0 WHERE id = ? AND is_donor = 1').run(user_id);
-          d.prepare("UPDATE node_donations SET status = 'offline' WHERE user_id = ? AND status = 'online'").run(user_id);
+
+        // 有任一在线捐赠节点：确保捐赠权益打开（自愈）
+        if (activeCount > 0) {
+          d.prepare('UPDATE users SET is_donor = 1 WHERE id = ? AND is_donor = 0').run(user_id);
+          continue;
+        }
+
+        // 无在线节点：仅当离线超过30分钟才回收
+        const lastOfflineAt = d.prepare(`
+          SELECT MAX(n.last_check) as last_check
+          FROM node_donations nd
+          JOIN nodes n ON nd.node_id = n.id
+          WHERE nd.user_id = ? AND nd.status = 'online' AND n.is_active = 0
+        `).get(user_id)?.last_check;
+
+        const offlineMinutes = lastOfflineAt ? (Date.now() - new Date(lastOfflineAt).getTime()) / 60000 : 99999;
+        if (offlineMinutes < 30) continue;
+
+        const changed = d.prepare('UPDATE users SET is_donor = 0 WHERE id = ? AND is_donor = 1').run(user_id).changes;
+        if (changed > 0) {
           const u = db.getUserById(user_id);
-          logger.info(`[捐赠回收] 回收捐赠者标识: ${u?.username || user_id}`);
-          db.addAuditLog(null, 'donor_revoke', `回收捐赠者标识: ${u?.username || user_id} (无在线捐赠节点)`, 'system');
+          logger.info(`[捐赠回收] 回收捐赠者标识: ${u?.username || user_id}, 离线 ${Math.floor(offlineMinutes)} 分钟`);
+          db.addAuditLog(null, 'donor_revoke', `回收捐赠者标识: ${u?.username || user_id} (离线${Math.floor(offlineMinutes)}分钟)`, 'system');
         }
       }
     } catch (e) { logger.error({ err: e }, '捐赠清理失败'); }
 
   } catch (err) { logger.error({ err }, '清理/冻结失败'); }
+}, { timezone: 'Asia/Shanghai' });
+
+// 每 10 分钟检查一次：捐赠节点离线超过 30 分钟回收权益，恢复上线自动恢复权益
+cron.schedule('*/10 * * * *', () => {
+  try {
+    const db = dbModule;
+    const d = db.getDb();
+    const donorUsers = d.prepare(`
+      SELECT DISTINCT user_id FROM node_donations WHERE status = 'online'
+      UNION
+      SELECT id as user_id FROM users WHERE is_donor = 1
+    `).all();
+
+    for (const { user_id } of donorUsers) {
+      const activeCount = d.prepare(`
+        SELECT COUNT(*) as cnt FROM node_donations nd
+        JOIN nodes n ON nd.node_id = n.id
+        WHERE nd.user_id = ? AND nd.status = 'online' AND n.is_active = 1
+      `).get(user_id)?.cnt || 0;
+
+      if (activeCount > 0) {
+        d.prepare('UPDATE users SET is_donor = 1 WHERE id = ? AND is_donor = 0').run(user_id);
+        continue;
+      }
+
+      const lastOfflineAt = d.prepare(`
+        SELECT MAX(n.last_check) as last_check
+        FROM node_donations nd
+        JOIN nodes n ON nd.node_id = n.id
+        WHERE nd.user_id = ? AND nd.status = 'online' AND n.is_active = 0
+      `).get(user_id)?.last_check;
+
+      const offlineMinutes = lastOfflineAt ? (Date.now() - new Date(lastOfflineAt).getTime()) / 60000 : 99999;
+      if (offlineMinutes < 30) continue;
+
+      const changed = d.prepare('UPDATE users SET is_donor = 0 WHERE id = ? AND is_donor = 1').run(user_id).changes;
+      if (changed > 0) {
+        const u = db.getUserById(user_id);
+        db.addAuditLog(null, 'donor_revoke', `回收捐赠者标识: ${u?.username || user_id} (离线${Math.floor(offlineMinutes)}分钟)`, 'system');
+      }
+    }
+  } catch (err) {
+    logger.error({ err }, '捐赠权益巡检失败');
+  }
 }, { timezone: 'Asia/Shanghai' });
 
 // 启动
