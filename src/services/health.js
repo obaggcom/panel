@@ -65,7 +65,7 @@ function saveTrafficRecords(nodeId, records) {
   return count;
 }
 
-// 流量超标检测（10GB/天）
+// 流量超标检测（20GB/天）
 function checkTrafficExceed() {
   try {
     const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10); // Asia/Shanghai
@@ -73,7 +73,7 @@ function checkTrafficExceed() {
       SELECT t.user_id, u.username, SUM(t.uplink) as total_up, SUM(t.downlink) as total_down
       FROM traffic_daily t JOIN users u ON t.user_id = u.id
       WHERE t.date = ? GROUP BY t.user_id HAVING (total_up + total_down) >= ?
-    `).all(today, 10 * 1073741824);
+    `).all(today, 20 * 1073741824);
     for (const u of todayTraffic) {
       const cacheKey = `traffic_notified_${u.user_id}_${today}`;
       if (!_trafficNotifiedCache.has(cacheKey)) {
