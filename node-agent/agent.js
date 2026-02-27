@@ -15,13 +15,16 @@ const crypto = require('crypto');
 const CONFIG_PATH = '/etc/vless-agent/config.json';
 const XRAY_CONFIG_PATH = '/usr/local/etc/xray/config.json';
 const AGENT_PATH = '/opt/vless-agent/agent.js';
-const AGENT_VERSION = process.env.AGENT_VERSION || '1.1.0';
+const AGENT_VERSION = process.env.AGENT_VERSION || '1.2.0';
 
 const CHINA_PROBE_TARGETS = [
   { host: '220.202.155.242', port: 80 },
   { host: '114.114.114.114', port: 53 },
   { host: '223.5.5.5', port: 53 },
 ];
+
+// IPv6 连通性探测（ping Google DNS，检测 IPv6 网络是否正常）
+const IPV6_PROBE_TARGET = { host: '2001:4860:4860::8888', port: 53 };
 
 let config = loadConfig();
 const REPORT_INTERVAL = config.reportInterval || 60_000;
@@ -148,6 +151,15 @@ async function checkChinaReachable() {
   }
 }
 
+// IPv6 连通性检测
+async function checkIPv6Reachable() {
+  try {
+    return await tcpProbe(IPV6_PROBE_TARGET.host, IPV6_PROBE_TARGET.port, 5000);
+  } catch {
+    return false;
+  }
+}
+
 // ─── 系统信息采集 ───
 function getSystemInfo() {
   const loadavg = os.loadavg();
@@ -221,10 +233,11 @@ async function getXrayTraffic() {
 // ─── 定时上报 ───
 async function report() {
   try {
-    const [xrayActive, traffic, cnReachable, disk] = await Promise.all([
+    const [xrayActive, traffic, cnReachable, ipv6Reachable, disk] = await Promise.all([
       getXrayStatus(),
       getXrayTraffic(),
       checkChinaReachable(),
+      checkIPv6Reachable(),
       getDiskUsage(),
     ]);
     const sys = getSystemInfo();
@@ -239,6 +252,7 @@ async function report() {
       xrayAlive: xrayActive,
       trafficRecords: traffic,
       cnReachable,
+      ipv6Reachable,
       loadAvg: sys.loadavg,
       memUsage: sys.memory,
       diskUsage: disk,

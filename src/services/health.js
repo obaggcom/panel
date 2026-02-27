@@ -137,7 +137,7 @@ function updateOnlineCache(nodeId, trafficRecords) {
  * 供 agent-ws.js 调用，集中所有节点状态更新、流量保存、通知等逻辑
  */
 function updateFromAgentReport(nodeId, reportData) {
-  const { xrayAlive, cnReachable, trafficRecords, configHash } = reportData;
+  const { xrayAlive, cnReachable, ipv6Reachable, trafficRecords, configHash } = reportData;
   const now = new Date(Date.now() + 8 * 3600000).toISOString();
   const node = db.getNodeById(nodeId);
   if (!node) return;
@@ -178,6 +178,25 @@ function updateFromAgentReport(nodeId, reportData) {
   } else {
     status = 1;
     remark = '';
+  }
+
+  // ─── IPv6 连通性检测 ───
+  const ipv6FailKey = `ipv6_${nodeId}`;
+  const prevIpv6Fail = _nodeFailCount.get(ipv6FailKey) || 0;
+  if (status === 1 && ipv6Reachable === false) {
+    const newIpv6Fail = prevIpv6Fail + 1;
+    _nodeFailCount.set(ipv6FailKey, newIpv6Fail);
+    remark = remark ? `${remark} | 🌐 IPv6 不通` : '🌐 IPv6 不通';
+    if (newIpv6Fail === 3) {
+      db.addAuditLog(null, 'node_ipv6_down', `${node.name}: IPv6 连通性异常（连续3次）`, 'system');
+      notify.ops(`🌐 <b>IPv6 连通性异常</b>\n节点: ${node.name}\nIPv4 正常，但 IPv6 不通\nSS 用户可能受影响`);
+    }
+  } else if (ipv6Reachable === true) {
+    if (prevIpv6Fail >= 3) {
+      db.addAuditLog(null, 'node_ipv6_recovered', `${node.name}: IPv6 恢复正常`, 'system');
+      notify.ops(`✅ <b>IPv6 恢复</b>\n节点: ${node.name}`);
+    }
+    _nodeFailCount.set(ipv6FailKey, 0);
   }
 
   // 防抖：连续失败计数，达到阈值才通知掉线
