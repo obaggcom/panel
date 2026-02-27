@@ -122,8 +122,8 @@ app.get('/api/agent/download', (req, res) => {
 
     const d = getDb();
     const globalToken = d.prepare("SELECT value FROM settings WHERE key='agent_token'").get()?.value;
-    const nodeToken = d.prepare('SELECT id FROM nodes WHERE agent_token = ? LIMIT 1').get(token);
-    const donateToken = d.prepare('SELECT id FROM donate_tokens WHERE token = ? LIMIT 1').get(token);
+    const nodeToken = d.prepare('SELECT 1 FROM nodes WHERE agent_token = ? LIMIT 1').get(token);
+    const donateToken = d.prepare('SELECT 1 FROM donate_tokens WHERE token = ? LIMIT 1').get(token);
 
     if (token !== globalToken && !nodeToken && !donateToken) {
       return res.status(403).send('Forbidden');
