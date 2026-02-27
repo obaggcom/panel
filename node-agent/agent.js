@@ -466,6 +466,7 @@ function createRawWs(urlStr) {
 
   let upgraded = false;
   let buffer = Buffer.alloc(0);
+  let fragmented = null;
 
   socket.on('data', (chunk) => {
     buffer = Buffer.concat([buffer, chunk]);
@@ -493,7 +494,18 @@ function createRawWs(urlStr) {
       buffer = buffer.slice(frame.totalLen);
 
       if (frame.opcode === 0x1 || frame.opcode === 0x2) {
-        emitter.emit('message', frame.payload);
+        if (frame.fin) {
+          emitter.emit('message', frame.payload);
+        } else {
+          fragmented = { opcode: frame.opcode, chunks: [frame.payload] };
+        }
+      } else if (frame.opcode === 0x0) {
+        if (!fragmented) continue;
+        fragmented.chunks.push(frame.payload);
+        if (frame.fin) {
+          emitter.emit('message', Buffer.concat(fragmented.chunks));
+          fragmented = null;
+        }
       } else if (frame.opcode === 0x8) {
         emitter.readyState = 3;
         const code = frame.payload.length >= 2 ? frame.payload.readUInt16BE(0) : 1000;
@@ -552,6 +564,7 @@ function createRawWs(urlStr) {
 
 function parseWsFrame(buf) {
   if (buf.length < 2) return null;
+  const fin = (buf[0] & 0x80) !== 0;
   const opcode = buf[0] & 0x0F;
   const masked = (buf[1] & 0x80) !== 0;
   let payloadLen = buf[1] & 0x7F;
@@ -576,7 +589,7 @@ function parseWsFrame(buf) {
     for (let i = 0; i < payload.length; i++) payload[i] ^= mask[i & 3];
   }
 
-  return { opcode, payload, totalLen: offset + payloadLen };
+  return { fin, opcode, payload, totalLen: offset + payloadLen };
 }
 
 function sendWsFrame(socket, opcode, payload) {

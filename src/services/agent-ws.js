@@ -4,6 +4,7 @@
  */
 const { WebSocketServer } = require('ws');
 const { v4: uuidv4 } = require('uuid');
+const crypto = require('crypto');
 const db = require('./database');
 const healthService = require('./health');
 const { notify } = require('./notify');
@@ -24,6 +25,14 @@ const CMD_TIMEOUT = 30000;
 let wss = null;
 let pingTimer = null;
 
+function bjNow() {
+  return new Date(Date.now() + 8 * 3600000).toISOString();
+}
+
+function bjNowFmt() {
+  return bjNow().replace('T', ' ').substring(0, 19);
+}
+
 function getOrCreateMetrics(nodeId) {
   if (!agentMetrics.has(nodeId)) {
     agentMetrics.set(nodeId, {
@@ -40,7 +49,16 @@ function markDisconnected(nodeId) {
   const metrics = getOrCreateMetrics(nodeId);
   metrics.disconnectCount += 1;
   metrics.consecutiveReconnects += 1;
-  metrics.lastDisconnectAt = new Date(Date.now() + 8 * 3600000).toISOString();
+  metrics.lastDisconnectAt = bjNow();
+}
+
+function cleanupPendingCommands(nodeId) {
+  for (const [cmdId, pending] of pendingCommands) {
+    if (pending.nodeId !== nodeId) continue;
+    clearTimeout(pending.timer);
+    pending.resolve({ success: false, error: 'Agent 断开连接' });
+    pendingCommands.delete(cmdId);
+  }
 }
 
 /**
@@ -78,6 +96,7 @@ function init(server) {
       const { nodeId } = ws._agentState;
       if (nodeId && agents.get(nodeId)?.ws === ws) {
         markDisconnected(nodeId);
+        cleanupPendingCommands(nodeId);
         agents.delete(nodeId);
         console.log(`[Agent-WS] 节点 #${nodeId} 断开连接`);
         // 延迟检测：等 30 秒看 Agent 是否重连，避免短暂抖动触发通知
@@ -90,7 +109,7 @@ function init(server) {
                 db.updateNode(nodeId, {
                   is_active: 0,
                   remark: '🔴 断开',
-                  last_check: new Date(Date.now() + 8 * 3600000).toISOString().replace('T', ' ').substring(0, 19),
+                  last_check: bjNowFmt(),
                 });
                 db.addAuditLog(null, 'agent_offline', `节点 Agent 断开: ${node.name}`, 'system');
                 notify.nodeDown(`${node.name} (Agent 断开)`);
@@ -112,6 +131,7 @@ function init(server) {
     for (const [nodeId, agent] of agents) {
       if (agent.ws.readyState !== 1) {
         markDisconnected(nodeId);
+        cleanupPendingCommands(nodeId);
         agents.delete(nodeId);
         continue;
       }
@@ -120,6 +140,7 @@ function init(server) {
         agent.ws.send(JSON.stringify({ type: 'ping', id: uuidv4() }));
       } catch {
         markDisconnected(nodeId);
+        cleanupPendingCommands(nodeId);
         agents.delete(nodeId);
         continue;
       }
@@ -128,6 +149,7 @@ function init(server) {
         if (agents.has(nodeId) && !agents.get(nodeId)._pongReceived) {
           console.log(`[Agent-WS] 节点 #${nodeId} pong 超时，断开`);
           markDisconnected(nodeId);
+          cleanupPendingCommands(nodeId);
           try { agent.ws.terminate(); } catch {}
           agents.delete(nodeId);
         }
@@ -222,7 +244,7 @@ function handleAuth(ws, msg) {
         nodeId: donateNodeId,
         nodeName: donateNode ? donateNode.name : `捐赠#${donation.id}`,
         ip,
-        connectedAt: new Date(Date.now() + 8 * 3600000).toISOString(),
+        connectedAt: bjNow(),
         lastReport: null,
         reportData: null,
         version: version || null,
@@ -259,11 +281,11 @@ function handleAuth(ws, msg) {
       db.addAuditLog(donation.user_id, 'donate_connect', `捐赠节点连接: IP ${ip}`, ip);
 
       // 🍑 蜜桃酱自动审核：5秒后自动通过（等地区检测+IPv6检测完成）
-      const protoChoice = donation.protocol_choice || tokenRecord?.protocol_choice || 'vless';
+      const protoChoice = donation.protocol_choice || 'vless';
 
       // 注册临时Agent连接以便发命令
       const tempId = `donate-${donation.id}`;
-      agents.set(tempId, { ws, nodeId: tempId, nodeName: `捐赠#${donation.id}`, ip, connectedAt: new Date(Date.now() + 8 * 3600000).toISOString(), lastReport: null, reportData: null, _pongReceived: true });
+      agents.set(tempId, { ws, nodeId: tempId, nodeName: `捐赠#${donation.id}`, ip, connectedAt: bjNow(), lastReport: null, reportData: null, _pongReceived: true });
 
       setTimeout(async () => {
         try {
@@ -286,14 +308,11 @@ function handleAuth(ws, msg) {
           }
 
           // 自动审核通过
-          const http = require('http');
           const freshDonation = d.prepare('SELECT * FROM node_donations WHERE id = ?').get(donation.id);
           if (freshDonation && freshDonation.status === 'pending') {
             console.log(`[🍑 蜜桃酱] 自动审核捐赠节点 #${donation.id} from ${ip}`);
 
             // 直接调用审核逻辑（复用 adminDonations 的核心逻辑）
-            const { v4: uuidv4 } = require('uuid');
-            const crypto = require('crypto');
             const deploy = require('./deploy');
             const uuidRepo = require('./repos/uuidRepo');
 
@@ -381,7 +400,7 @@ function handleAuth(ws, msg) {
               ws._agentState.nodeId = mainNodeId;
               const node = db.getNodeById(mainNodeId);
               agents.delete(tempId);
-              agents.set(mainNodeId, { ws, nodeId: mainNodeId, nodeName: node?.name || `捐赠#${donation.id}`, ip, connectedAt: new Date(Date.now() + 8 * 3600000).toISOString(), lastReport: null, reportData: null, _pongReceived: true });
+              agents.set(mainNodeId, { ws, nodeId: mainNodeId, nodeName: node?.name || `捐赠#${donation.id}`, ip, connectedAt: bjNow(), lastReport: null, reportData: null, _pongReceived: true });
 
               // 推送配置
               for (const nid of nodeIds) {
@@ -419,7 +438,9 @@ function handleAuth(ws, msg) {
         }
       }).catch(() => {});
     } catch {}
-    notify.donateConnect && notify.donateConnect(ip, donation.user_id);
+    if (donation.status !== 'online') {
+      notify.donateConnect && notify.donateConnect(ip, donation.user_id);
+    }
     return;
   }
 
@@ -454,7 +475,7 @@ function handleAuth(ws, msg) {
 
   const metrics = getOrCreateMetrics(nodeId);
   if (metrics.consecutiveReconnects > 0) {
-    metrics.lastReconnectAt = new Date(Date.now() + 8 * 3600000).toISOString();
+    metrics.lastReconnectAt = bjNow();
     metrics.consecutiveReconnects = 0;
   }
 
@@ -463,7 +484,7 @@ function handleAuth(ws, msg) {
     nodeId,
     nodeName: node.name,
     ip: ws._agentState.ip,
-    connectedAt: new Date(Date.now() + 8 * 3600000).toISOString(),
+    connectedAt: bjNow(),
     lastReport: null,
     reportData: null,
     version: version || null,
@@ -488,7 +509,7 @@ function handleReport(ws, msg) {
   if (!agent) return;
 
   const { xrayAlive, cnReachable, loadAvg, memUsage, diskUsage, trafficRecords, version, capabilities, reconnectMetrics, configHash } = msg;
-  const now = new Date(Date.now() + 8 * 3600000).toISOString();
+  const now = bjNow();
 
   // 更新 agent 连接池中的上报数据（供 getAgentReport 查询）
   const reportData = { xrayAlive, cnReachable, loadAvg, memUsage, diskUsage, reportedAt: now };
@@ -554,7 +575,7 @@ function sendCommand(nodeId, command) {
       resolve({ success: false, error: '指令超时' });
     }, CMD_TIMEOUT);
 
-    pendingCommands.set(id, { resolve, reject, timer });
+    pendingCommands.set(id, { resolve, reject, timer, nodeId });
 
     try {
       agent.ws.send(JSON.stringify(payload));
