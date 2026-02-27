@@ -232,6 +232,26 @@ function handleAuth(ws, msg) {
 
       ws.send(JSON.stringify({ type: 'auth_ok', message: '捐赠节点已上线' }));
       console.log(`[Agent-WS] 捐赠节点重连 node#${donateNodeId} from ${ip}`);
+
+      // 自动修正：VLESS 捐赠节点 host 是 IPv6 时，检测 IPv4 并修正
+      if (donateNode && donateNode.protocol === 'vless' && donateNode.host && donateNode.host.includes(':')) {
+        setTimeout(async () => {
+          try {
+            const result = await sendCommand(donateNodeId, { type: 'exec', command: 'curl -4 -s --max-time 5 ifconfig.me' });
+            const ipv4 = result.success && result.data?.stdout?.trim();
+            if (ipv4 && /^\d+\.\d+\.\d+\.\d+$/.test(ipv4)) {
+              db.updateNode(donateNodeId, { host: ipv4 });
+              console.log(`[🍑 蜜桃酱] VLESS 捐赠节点 #${donateNodeId} IPv4 修正: ${donateNode.host} → ${ipv4}`);
+              // 重新同步配置
+              const deploy = require('./deploy');
+              const freshNode = db.getNodeById(donateNodeId);
+              deploy.syncNodeConfig(freshNode, db).catch(() => {});
+            }
+          } catch (e) {
+            console.log(`[🍑 蜜桃酱] IPv4 修正失败: ${e.message}`);
+          }
+        }, 3000);
+      }
     } else {
       ws._agentState.nodeId = `donate-${donation.id}`;
       ws.send(JSON.stringify({ type: 'auth_ok', message: '捐赠节点已连接，蜜桃酱正在自动审核...' }));
@@ -293,13 +313,26 @@ function handleAuth(ws, msg) {
 
             // 创建 VLESS 节点（vless 或 dual）
             if (protoChoice === 'vless' || protoChoice === 'dual') {
-              const nodeName = region ? `${region}-${donorName}捐赠` : `${donorName}捐赠`;
+              // 检测服务器 IPv4 地址（Agent 可能通过 IPv6 连接）
+              let vlessHost = ip;
+              try {
+                const ipv4Result = await sendCommand(tempId, { type: 'exec', command: 'curl -4 -s --max-time 5 ifconfig.me' });
+                const detectedIpv4 = ipv4Result.success && ipv4Result.data?.stdout?.trim();
+                if (detectedIpv4 && /^\d+\.\d+\.\d+\.\d+$/.test(detectedIpv4)) {
+                  vlessHost = detectedIpv4;
+                  console.log(`[🍑 蜜桃酱] VLESS IPv4 检测: ${detectedIpv4}`);
+                }
+              } catch (e) {
+                console.log(`[🍑 蜜桃酱] IPv4 检测失败，使用连接 IP: ${ip}`);
+              }
+
+              const nodeName = region ? `${region}-${donorName}` : donorName;
               const port = 10000 + Math.floor(Math.random() * 50000);
               const agentToken = uuidv4();
               const nodeResult = d.prepare(`
                 INSERT INTO nodes (name, host, port, uuid, protocol, ip_version, is_active, agent_token, group_name, remark, is_donation)
-                VALUES (?, ?, ?, ?, 'vless', 4, 1, ?, '捐赠节点', '🎁 捐赠节点', 1)
-              `).run(nodeName, ip, port, uuidv4(), agentToken);
+                VALUES (?, ?, ?, ?, 'vless', 4, 1, ?, '捐赠节点', '', 1)
+              `).run(nodeName, vlessHost, port, uuidv4(), agentToken);
               const nodeId = Number(nodeResult.lastInsertRowid);
               nodeIds.push(nodeId);
 
@@ -323,12 +356,12 @@ function handleAuth(ws, msg) {
               if (ipv6Match) {
                 const ipv6Addr = ipv6Match[1];
                 const ssName = protoChoice === 'dual'
-                  ? (region ? `${region}-${donorName}捐赠-SS` : `${donorName}捐赠-SS`)
-                  : (region ? `${region}-${donorName}捐赠` : `${donorName}捐赠`);
+                  ? (region ? `${region}-${donorName}⁶` : `${donorName}⁶`)
+                  : (region ? `${region}-${donorName}` : donorName);
                 const ssPort = 10000 + Math.floor(Math.random() * 50000);
                 const ssResult = d.prepare(`
                   INSERT INTO nodes (name, host, port, uuid, protocol, ip_version, ss_method, is_active, agent_token, group_name, remark, is_donation)
-                  VALUES (?, ?, ?, ?, 'ss', 6, 'aes-256-gcm', 1, ?, '捐赠节点', '🎁 捐赠节点', 1)
+                  VALUES (?, ?, ?, ?, 'ss', 6, 'aes-256-gcm', 1, ?, '捐赠节点', '', 1)
                 `).run(ssName, ipv6Addr, ssPort, uuidv4(), uuidv4());
                 const ssNodeId = Number(ssResult.lastInsertRowid);
                 nodeIds.push(ssNodeId);
