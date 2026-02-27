@@ -54,10 +54,16 @@ async function loadTraffic(page) {
     body.innerHTML = '<tr><td colspan="5" class="py-6 px-4 text-gray-600 text-xs text-center">该时段暂无流量数据</td></tr>';
   } else {
     d.rows.forEach((u, i) => {
-      body.appendChild(_buildTrafficRow(
-        [offset + i + 1, u.username, fmtBytes(u.total_up), fmtBytes(u.total_down), fmtBytes(u.total_up + u.total_down)],
-        ['py-2 px-4 text-[11px] text-gray-500', 'py-2 px-4 text-xs text-white', 'py-2 px-4 text-xs', 'py-2 px-4 text-xs', 'py-2 px-4 text-xs font-medium text-rose-400']
-      ));
+      const tr = document.createElement('tr');
+      tr.className = 'border-b border-white/5 hover:bg-white/[0.02]';
+      tr.innerHTML = `
+        <td class="py-2 px-4 text-[11px] text-gray-500">${offset + i + 1}</td>
+        <td class="py-2 px-4 text-xs"><a href="javascript:void(0)" onclick="showUserDetail(${u.id})" class="text-cyan-400 hover:text-cyan-300 hover:underline cursor-pointer">${u.username}</a></td>
+        <td class="py-2 px-4 text-xs">${fmtBytes(u.total_up)}</td>
+        <td class="py-2 px-4 text-xs">${fmtBytes(u.total_down)}</td>
+        <td class="py-2 px-4 text-xs font-medium text-rose-400">${fmtBytes(u.total_up + u.total_down)}</td>
+      `;
+      body.appendChild(tr);
     });
   }
   document.getElementById('traffic-info').textContent = '共 ' + d.total + ' 人';
@@ -124,3 +130,92 @@ async function loadTrafficChart() {
 // 初始加载节点流量
 document.addEventListener('DOMContentLoaded', () => loadNodeTraffic());
 if (location.hash === '#traffic') setTimeout(loadTrafficChart, 200);
+
+// 用户详情弹窗
+async function showUserDetail(userId) {
+  // 创建或复用弹窗
+  let modal = document.getElementById('user-detail-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'user-detail-modal';
+    modal.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm';
+    modal.onclick = (e) => { if (e.target === modal) modal.classList.add('hidden'); };
+    document.body.appendChild(modal);
+  }
+  modal.classList.remove('hidden');
+  modal.innerHTML = '<div class="glass rounded-2xl p-6 w-[90vw] max-w-lg max-h-[85vh] overflow-y-auto"><p class="text-gray-400 text-sm text-center">⏳ 加载中...</p></div>';
+
+  try {
+    const res = await fetch('/admin/api/users/' + userId + '/detail');
+    const d = await res.json();
+    if (d.error) { modal.innerHTML = `<div class="glass rounded-2xl p-6"><p class="text-red-400">${d.error}</p></div>`; return; }
+
+    const u = d.info;
+    const levelColors = ['text-gray-400','text-blue-400','text-green-400','text-purple-400','text-amber-400'];
+    const badges = [];
+    if (u.is_admin) badges.push('<span class="px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 text-[10px]">管理员</span>');
+    if (u.is_donor) badges.push('<span class="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-[10px]">🎁 捐赠者</span>');
+    if (u.is_blocked) badges.push('<span class="px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 text-[10px]">🚫 封禁</span>');
+    if (u.is_frozen) badges.push('<span class="px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 text-[10px]">❄️ 冻结</span>');
+
+    const ipsHtml = d.subAccess.ips.length > 0
+      ? d.subAccess.ips.map(ip => `<div class="flex justify-between text-xs py-1 border-b border-white/5"><span class="text-gray-300">${ip.ip}</span><span class="text-gray-500">${ip.count}次 · ${ip.last_access}</span></div>`).join('')
+      : '<p class="text-gray-600 text-xs">24h内无拉取记录</p>';
+
+    const uasHtml = d.subAccess.uas.length > 0
+      ? d.subAccess.uas.map(ua => `<div class="flex justify-between text-xs py-1 border-b border-white/5"><span class="text-gray-300 truncate mr-2" title="${ua.ua}">${ua.ua || '(空)'}</span><span class="text-gray-500 shrink-0">${ua.count}次</span></div>`).join('')
+      : '<p class="text-gray-600 text-xs">无UA记录</p>';
+
+    const timelineHtml = d.subAccess.timeline.length > 0
+      ? d.subAccess.timeline.slice(0, 10).map(t => `<div class="text-[11px] py-1 border-b border-white/5 text-gray-400"><span class="text-gray-500">${t.time}</span> · ${t.ip} · <span class="text-gray-600 truncate">${(t.ua || '').slice(0, 40)}</span></div>`).join('')
+      : '<p class="text-gray-600 text-xs">无记录</p>';
+
+    modal.innerHTML = `
+      <div class="glass rounded-2xl p-5 w-[90vw] max-w-lg max-h-[85vh] overflow-y-auto space-y-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <h3 class="text-white font-semibold">${u.username}</h3>
+            <div class="flex items-center gap-2 mt-1">
+              <span class="text-[11px] ${levelColors[Math.min(u.trust_level,4)]}">Lv.${u.trust_level}</span>
+              ${badges.join(' ')}
+            </div>
+          </div>
+          <button onclick="document.getElementById('user-detail-modal').classList.add('hidden')" class="text-gray-500 hover:text-white text-lg">✕</button>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2 text-xs">
+          <div class="glass rounded-xl p-3"><p class="text-gray-500 text-[10px]">今日流量</p><p class="text-white font-medium">${fmtBytes(d.todayTraffic.up + d.todayTraffic.down)}</p><p class="text-gray-500 text-[10px]">↑${fmtBytes(d.todayTraffic.up)} ↓${fmtBytes(d.todayTraffic.down)}</p></div>
+          <div class="glass rounded-xl p-3"><p class="text-gray-500 text-[10px]">累计流量</p><p class="text-white font-medium">${fmtBytes(d.totalTraffic.up + d.totalTraffic.down)}</p><p class="text-gray-500 text-[10px]">↑${fmtBytes(d.totalTraffic.up)} ↓${fmtBytes(d.totalTraffic.down)}</p></div>
+        </div>
+
+        <div class="text-[11px] text-gray-500 space-y-1">
+          <div>注册: ${u.created_at || '未知'} · 最后活跃: ${u.last_login || '未知'}</div>
+          ${u.expires_at ? '<div>到期: ' + u.expires_at + '</div>' : ''}
+          ${u.traffic_limit ? '<div>流量限额: ' + fmtBytes(u.traffic_limit) + '/天</div>' : ''}
+        </div>
+
+        <div>
+          <h4 class="text-gray-400 text-xs font-medium mb-2">📡 订阅拉取 IP（24h）</h4>
+          <div class="glass rounded-xl p-3 max-h-32 overflow-y-auto">${ipsHtml}</div>
+        </div>
+
+        <div>
+          <h4 class="text-gray-400 text-xs font-medium mb-2">🔍 User-Agent（24h）</h4>
+          <div class="glass rounded-xl p-3 max-h-32 overflow-y-auto">${uasHtml}</div>
+        </div>
+
+        <div>
+          <h4 class="text-gray-400 text-xs font-medium mb-2">⏱ 最近拉取记录</h4>
+          <div class="glass rounded-xl p-3 max-h-40 overflow-y-auto">${timelineHtml}</div>
+        </div>
+
+        <div class="flex gap-2 pt-2">
+          <button onclick="fetch('/admin/api/users/${u.id}/toggle-block',{method:'POST',headers:{'X-CSRF-Token':_csrf}}).then(r=>r.json()).then(d=>{if(d.ok){showToast(d.message);showUserDetail(${u.id})}})" class="text-xs px-3 py-1.5 rounded-lg ${u.is_blocked ? 'bg-emerald-600/40 text-emerald-300' : 'bg-red-500/20 text-red-400'} hover:opacity-80 transition">${u.is_blocked ? '✅ 解封' : '🚫 封禁'}</button>
+          <button onclick="fetch('/admin/api/users/${u.id}/reset-token',{method:'POST',headers:{'X-CSRF-Token':_csrf}}).then(r=>r.json()).then(d=>{if(d.ok)showToast('订阅已重置')})" class="text-xs px-3 py-1.5 rounded-lg bg-amber-500/20 text-amber-400 hover:opacity-80 transition">🔄 重置订阅</button>
+        </div>
+      </div>
+    `;
+  } catch (e) {
+    modal.innerHTML = `<div class="glass rounded-2xl p-6"><p class="text-red-400 text-sm">加载失败: ${e.message}</p></div>`;
+  }
+}

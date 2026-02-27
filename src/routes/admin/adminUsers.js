@@ -83,3 +83,36 @@ router.post('/users/:id/set-expiry', (req, res) => {
 });
 
 module.exports = router;
+
+// 用户综合详情（流量排行点击查看）
+router.get('/users/:id/detail', (req, res) => {
+  const id = parseInt(req.params.id);
+  if (!id) return res.status(400).json({ error: '参数错误' });
+  const user = db.getUserById(id);
+  if (!user) return res.status(404).json({ error: '用户不存在' });
+
+  // 基本信息
+  const info = {
+    id: user.id, username: user.username, name: user.name,
+    trust_level: user.trust_level, is_admin: user.is_admin,
+    is_blocked: user.is_blocked, is_frozen: user.is_frozen, is_donor: user.is_donor,
+    last_login: user.last_login, created_at: user.created_at,
+    expires_at: user.expires_at, traffic_limit: user.traffic_limit,
+    nodeloc_id: user.nodeloc_id, sub_token: user.sub_token,
+  };
+
+  // 流量统计
+  const d = db.getDb();
+  const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
+  const todayTraffic = d.prepare('SELECT COALESCE(SUM(uplink),0) as up, COALESCE(SUM(downlink),0) as down FROM traffic_daily WHERE user_id = ? AND date = ?').get(id, today);
+  const totalTraffic = d.prepare('SELECT COALESCE(SUM(uplink),0) as up, COALESCE(SUM(downlink),0) as down FROM traffic_daily WHERE user_id = ?').get(id);
+
+  // 订阅拉取记录（最近24h）
+  const subAccess = db.getSubAccessUserDetail(id, 24);
+
+  // 最近7天流量趋势
+  const weekAgo = new Date(Date.now() - 6 * 86400000 + 8 * 3600000).toISOString().slice(0, 10);
+  const dailyTraffic = d.prepare('SELECT date, COALESCE(SUM(uplink),0) as up, COALESCE(SUM(downlink),0) as down FROM traffic_daily WHERE user_id = ? AND date >= ? GROUP BY date ORDER BY date').all(id, weekAgo);
+
+  res.json({ info, todayTraffic, totalTraffic, subAccess, dailyTraffic });
+});
