@@ -548,8 +548,12 @@ router.get('/donate', requireAuth, (req, res) => {
     d.prepare("INSERT INTO donate_tokens (user_id, token, created_at) VALUES (?, ?, datetime('now', 'localtime'))").run(user.id, donateToken);
   }
 
+  // 读取当前token的协议选择
+  const tokenRow = d.prepare('SELECT protocol_choice FROM donate_tokens WHERE token = ?').get(donateToken);
+  const protocolChoice = tokenRow?.protocol_choice || 'vless';
+
   const wsUrl = process.env.AGENT_WS_URL || 'wss://vip.vip.sd/ws/agent';
-  const installCmd = `bash <(curl -sL https://vip.vip.sd/donate/install.sh) ${wsUrl} ${donateToken} ${protocolChoice || 'vless'}`;
+  const installCmd = `bash <(curl -sL https://vip.vip.sd/donate/install.sh) ${wsUrl} ${donateToken} ${protocolChoice}`;
 
   // 捐赠者排行榜（只统计在线节点）
   const donors = d.prepare(`
@@ -560,10 +564,6 @@ router.get('/donate', requireAuth, (req, res) => {
     WHERE nd.status = 'online' AND n.is_active = 1
     GROUP BY nd.user_id ORDER BY count DESC LIMIT 10
   `).all();
-
-  // 读取当前token的协议选择
-  const tokenRow = d.prepare('SELECT protocol_choice FROM donate_tokens WHERE token = ?').get(donateToken);
-  const protocolChoice = tokenRow?.protocol_choice || 'vless';
 
   res.render('donate', { user, donations, donateToken, installCmd, donors, protocolChoice });
 });
