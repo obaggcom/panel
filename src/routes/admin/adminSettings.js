@@ -2,11 +2,8 @@ const express = require('express');
 const db = require('../../services/database');
 const { notify } = require('../../services/notify');
 const { escapeHtml } = require('../../utils/escapeHtml');
-
-function parseIntId(raw) {
-  const n = Number(raw);
-  return Number.isInteger(n) && n > 0 ? n : null;
-}
+const { dateKeyInTimeZone, formatDateTimeInTimeZone, parseDateInput } = require('../../utils/time');
+const { parseIntId } = require('../../utils/validators');
 
 const router = express.Router();
 
@@ -24,14 +21,16 @@ router.get('/logs', (req, res) => {
       action: escapeHtml(r.action),
       detail: escapeHtml(r.detail),
       username: escapeHtml(r.username),
+      created_at_display: formatDateTimeInTimeZone(r.created_at, 'Asia/Shanghai'),
     }));
   }
-  res.json(data);
+  const pages = Math.max(1, Math.ceil((data.total || 0) / limit));
+  res.json({ ...data, page, limit, pages });
 });
 
 router.post('/logs/clear', (req, res) => {
   db.clearAuditLogs();
-  db.addAuditLog(req.user.id, 'logs_clear', '清空日志', req.ip);
+  db.addAuditLog(req.user.id, 'logs_clear', '清空日志', req.clientIp || req.ip);
   res.json({ ok: true });
 });
 
@@ -75,7 +74,11 @@ router.get('/sub-access/:userId', (req, res) => {
   const userId = parseIntId(req.params.userId);
   if (!userId) return res.status(400).json({ error: '参数错误' });
   const hours = parseInt(req.query.hours) || 24;
-  res.json(db.getSubAccessIPs(userId, hours));
+  const rows = db.getSubAccessIPs(userId, hours).map((r) => ({
+    ...r,
+    last_access_display: formatDateTimeInTimeZone(r.last_access, 'Asia/Shanghai'),
+  }));
+  res.json(rows);
 });
 
 // 订阅统计
@@ -87,14 +90,32 @@ router.get('/sub-stats', (req, res) => {
   const limit = 20;
   const offset = (page - 1) * limit;
   const data = db.getSubAccessStats(hours, limit, offset, onlyHigh, sort);
-  res.json({ ...data, page, limit });
+  if (Array.isArray(data.data)) {
+    data.data = data.data.map((r) => ({
+      ...r,
+      last_access_display: formatDateTimeInTimeZone(r.last_access, 'Asia/Shanghai'),
+    }));
+  }
+  const pages = Math.max(1, Math.ceil((data.total || 0) / limit));
+  res.json({ ...data, page, limit, pages });
 });
 
 router.get('/sub-stats/:userId/detail', (req, res) => {
   const userId = parseIntId(req.params.userId);
   if (!userId) return res.status(400).json({ error: '参数错误' });
   const hours = parseInt(req.query.hours) || 24;
-  res.json(db.getSubAccessUserDetail(userId, hours));
+  const detail = db.getSubAccessUserDetail(userId, hours);
+  res.json({
+    ...detail,
+    ips: (detail.ips || []).map((r) => ({
+      ...r,
+      last_access_display: formatDateTimeInTimeZone(r.last_access, 'Asia/Shanghai'),
+    })),
+    timeline: (detail.timeline || []).map((r) => ({
+      ...r,
+      time_display: formatDateTimeInTimeZone(r.time, 'Asia/Shanghai'),
+    })),
+  });
 });
 
 // AI 运营日记
@@ -104,7 +125,32 @@ router.get('/diary', (req, res) => {
   const offset = (page - 1) * limit;
   const data = db.getDiaryEntries(limit, offset);
   const stats = db.getDiaryStats();
-  res.json({ ...data, page, stats });
+  const pages = Math.max(1, Math.ceil((data.total || 0) / limit));
+  const rows = (data.rows || []).map((entry) => {
+    const dt = formatDateTimeInTimeZone(entry.created_at, 'Asia/Shanghai');
+    const [date = '', time = ''] = dt.split(' ');
+    const weekday = entry.created_at
+      ? new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', weekday: 'short' }).format(parseDateInput(entry.created_at))
+      : '';
+    return {
+      ...entry,
+      created_at_display: dt,
+      created_date_display: date,
+      created_time_display: time,
+      created_weekday_display: weekday,
+    };
+  });
+  res.json({
+    ...data,
+    rows,
+    page,
+    limit,
+    pages,
+    stats: {
+      ...stats,
+      firstEntryDisplay: formatDateTimeInTimeZone(stats.firstEntry, 'Asia/Shanghai'),
+    },
+  });
 });
 
 // AI 运维配置
@@ -122,7 +168,7 @@ router.post('/ops-config', (req, res) => {
   for (const [k, v] of Object.entries(req.body)) {
     if (allowed.includes(k)) db.setSetting(k, String(v));
   }
-  db.addAuditLog(req.user.id, 'ops_config', '更新 AI 运维配置', req.ip);
+  db.addAuditLog(req.user.id, 'ops_config', '更新 AI 运维配置', req.clientIp || req.ip);
   res.json({ ok: true });
 });
 
@@ -135,7 +181,7 @@ router.get('/ops-dashboard', (req, res) => {
   const blocked = nodes.filter(n => n.fail_count >= 3).length;
   const offline = total - online;
 
-  const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
+  const today = dateKeyInTimeZone(new Date(), 'Asia/Shanghai');
   const lastPatrol = db.getSetting('ops_last_patrol') || '';
 
   const todayStats = d.prepare(`
@@ -146,7 +192,15 @@ router.get('/ops-dashboard', (req, res) => {
     FROM audit_log WHERE date(created_at) = ?
   `).get(today) || { patrols: 0, swaps: 0, fixes: 0 };
 
-  res.json({ total, online, offline, blocked, lastPatrol, todayStats });
+  res.json({
+    total,
+    online,
+    offline,
+    blocked,
+    lastPatrol,
+    lastPatrolDisplay: formatDateTimeInTimeZone(lastPatrol, 'Asia/Shanghai'),
+    todayStats,
+  });
 });
 
 router.get('/ops-events', (req, res) => {
@@ -175,10 +229,12 @@ router.get('/ops-events', (req, res) => {
       action: 'diagnosis_' + e.status,
       detail: escapeHtml(`${e.node_name || '未知节点'}: ${e.diag_info || ''}${e.ai_analysis ? ' → ' + e.ai_analysis : ''}`),
       created_at: e.created_at,
+      created_at_display: formatDateTimeInTimeZone(e.created_at, 'Asia/Shanghai'),
       source: 'diagnosis',
       type: 'diagnosis'
     }))
-  ].sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')).slice(0, limit);
+  ].sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')).slice(0, limit)
+    .map(e => ({ ...e, created_at_display: e.created_at_display || formatDateTimeInTimeZone(e.created_at, 'Asia/Shanghai') }));
   res.json(merged);
 });
 

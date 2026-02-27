@@ -3,11 +3,7 @@ const db = require('../../services/database');
 const aws = require('../../services/aws');
 const deployService = require('../../services/deploy');
 const { notify } = require('../../services/notify');
-
-function parseIntId(raw) {
-  const n = Number(raw);
-  return Number.isInteger(n) && n > 0 ? n : null;
-}
+const { parseIntId } = require('../../utils/validators');
 
 const router = express.Router();
 
@@ -54,12 +50,12 @@ router.post('/aws/config', (req, res) => {
     name, accessKey, secretKey, defaultRegion: 'us-east-1',
     socks5Host: socks.host, socks5Port: socks.port, socks5User: socks.user, socks5Pass: socks.pass
   });
-  db.addAuditLog(req.user.id, 'aws_config', `新增 AWS 账号: ${name}`, req.ip);
+  db.addAuditLog(req.user.id, 'aws_config', `新增 AWS 账号: ${name}`, req.clientIp || req.ip);
   res.json({ ok: true });
 });
 
 router.put('/aws/config/:id', (req, res) => {
-  const id = parseInt(req.params.id);
+  const id = parseIntId(req.params.id);
   if (!id) return res.status(400).json({ error: '参数错误' });
   const current = db.getAwsAccountById(id);
   if (!current) return res.status(404).json({ error: '账号不存在' });
@@ -74,15 +70,15 @@ router.put('/aws/config/:id', (req, res) => {
     name: name || current.name,
     socks5_host: socks.host, socks5_port: socks.port, socks5_user: socks.user, socks5_pass: socks.pass
   });
-  db.addAuditLog(req.user.id, 'aws_config_edit', `编辑 AWS 账号 #${id}`, req.ip);
+  db.addAuditLog(req.user.id, 'aws_config_edit', `编辑 AWS 账号 #${id}`, req.clientIp || req.ip);
   res.json({ ok: true });
 });
 
 router.delete('/aws/config/:id', (req, res) => {
-  const id = parseInt(req.params.id);
+  const id = parseIntId(req.params.id);
   if (!id) return res.status(400).json({ error: '参数错误' });
   db.deleteAwsAccount(id);
-  db.addAuditLog(req.user.id, 'aws_config_delete', `删除 AWS 账号 #${id}`, req.ip);
+  db.addAuditLog(req.user.id, 'aws_config_delete', `删除 AWS 账号 #${id}`, req.clientIp || req.ip);
   res.json({ ok: true });
 });
 
@@ -145,7 +141,7 @@ router.post('/nodes/:id/aws-bind', async (req, res) => {
     try { await aws.tagInstance(aws_instance_id, { Name: node.name }, aws_type || 'ec2', aws_region, aws_account_id ? parseInt(aws_account_id) : undefined); }
     catch (e) { console.log(`[AWS绑定] 打标签失败: ${e.message}`); }
   }
-  db.addAuditLog(req.user.id, 'aws_bind', `绑定 AWS: ${node.name} → ${aws_instance_id} (${aws_type}) [账号:${aws_account_id || '默认'}]`, req.ip);
+  db.addAuditLog(req.user.id, 'aws_bind', `绑定 AWS: ${node.name} → ${aws_instance_id} (${aws_type}) [账号:${aws_account_id || '默认'}]`, req.clientIp || req.ip);
   res.json({ ok: true });
 });
 
@@ -155,7 +151,7 @@ router.post('/nodes/:id/swap-ip', async (req, res) => {
   const node = db.getNodeById(id);
   if (!node) return res.status(404).json({ error: '节点不存在' });
   if (!node.aws_instance_id) return res.status(400).json({ error: '节点未绑定 AWS 实例' });
-  db.addAuditLog(req.user.id, 'aws_swap_ip', `手动换 IP: ${node.name}`, req.ip);
+  db.addAuditLog(req.user.id, 'aws_swap_ip', `手动换 IP: ${node.name}`, req.clientIp || req.ip);
   try {
     const result = await aws.swapNodeIp(node, node.aws_instance_id, node.aws_type, node.aws_region, node.aws_account_id);
     if (result.success) { notify.ops(`🔄 ${node.name} 手动换 IP: ${result.oldIp} → ${result.newIp}`).catch(() => {}); }
@@ -184,7 +180,7 @@ router.post('/aws/start', async (req, res) => {
   try {
     if (type === 'lightsail') await aws.startLightsailInstance(instanceId, region, accountId ? parseInt(accountId) : undefined);
     else await aws.startEC2Instance(instanceId, region, accountId ? parseInt(accountId) : undefined);
-    db.addAuditLog(req.user.id, 'aws_start', `开机: ${instanceId} (${type})`, req.ip);
+    db.addAuditLog(req.user.id, 'aws_start', `开机: ${instanceId} (${type})`, req.clientIp || req.ip);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -195,7 +191,7 @@ router.post('/aws/stop', async (req, res) => {
   try {
     if (type === 'lightsail') await aws.stopLightsailInstance(instanceId, region, accountId ? parseInt(accountId) : undefined);
     else await aws.stopEC2Instance(instanceId, region, accountId ? parseInt(accountId) : undefined);
-    db.addAuditLog(req.user.id, 'aws_stop', `关机: ${instanceId} (${type})`, req.ip);
+    db.addAuditLog(req.user.id, 'aws_stop', `关机: ${instanceId} (${type})`, req.clientIp || req.ip);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -206,7 +202,7 @@ router.post('/aws/terminate', async (req, res) => {
   try {
     if (type === 'lightsail') await aws.terminateLightsailInstance(instanceId, region, accountId ? parseInt(accountId) : undefined);
     else await aws.terminateEC2Instance(instanceId, region, accountId ? parseInt(accountId) : undefined);
-    db.addAuditLog(req.user.id, 'aws_terminate', `终止实例: ${instanceId} (${type})`, req.ip);
+    db.addAuditLog(req.user.id, 'aws_terminate', `终止实例: ${instanceId} (${type})`, req.clientIp || req.ip);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -224,7 +220,7 @@ router.post('/aws/swap-ip', async (req, res) => {
       let result;
       if (type === 'lightsail') result = await aws.swapLightsailIp(instanceId, region, accountId ? parseInt(accountId) : undefined);
       else result = await aws.swapEC2Ip(instanceId, region, accountId ? parseInt(accountId) : undefined);
-      db.addAuditLog(req.user.id, 'aws_swap_ip', `换IP: ${instanceId} ${result.oldIp} → ${result.newIp}`, req.ip);
+      db.addAuditLog(req.user.id, 'aws_swap_ip', `换IP: ${instanceId} ${result.oldIp} → ${result.newIp}`, req.clientIp || req.ip);
       res.json({ success: true, newIp: result.newIp, oldIp: result.oldIp });
     }
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -238,7 +234,7 @@ router.post('/aws/launch-and-deploy', async (req, res) => {
   res.json({ ok: true, message: '创建中...' });
 
   try {
-    db.addAuditLog(req.user.id, 'aws_launch', `开始创建: ${type} ${spec} in ${region} (账号#${accountId})`, req.ip);
+    db.addAuditLog(req.user.id, 'aws_launch', `开始创建: ${type} ${spec} in ${region} (账号#${accountId})`, req.clientIp || req.ip);
 
     let instanceId;
     if (type === 'lightsail') {
@@ -279,11 +275,11 @@ router.post('/aws/launch-and-deploy', async (req, res) => {
       catch (e) { console.log(`[一键部署] 打标签失败: ${e.message}`); }
     }
 
-    db.addAuditLog(req.user.id, 'aws_launch_done', `一键部署完成: ${instanceId} IP: ${publicIp}`, req.ip);
+    db.addAuditLog(req.user.id, 'aws_launch_done', `一键部署完成: ${instanceId} IP: ${publicIp}`, req.clientIp || req.ip);
     try { notify.ops(`🚀 一键部署完成: ${instanceId} (${publicIp})`).catch(() => {}); } catch {}
   } catch (e) {
     console.error(`[一键部署] 失败: ${e.message}`);
-    db.addAuditLog(req.user.id, 'aws_launch_fail', `一键部署失败: ${e.message}`, req.ip);
+    db.addAuditLog(req.user.id, 'aws_launch_fail', `一键部署失败: ${e.message}`, req.clientIp || req.ip);
     try { notify.ops(`❌ 一键部署失败: ${e.message}`).catch(() => {}); } catch {}
   }
 });

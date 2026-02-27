@@ -10,6 +10,21 @@ function fmtBytes(b) {
   return (b / Math.pow(1024, i)).toFixed(1) + ' ' + u[i];
 }
 
+function escHtml(v) {
+  if (v == null) return '';
+  return String(v)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function toSafeInt(v, fallback = 0) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 function switchRange(range) {
   currentRange = range;
   document.querySelectorAll('#traffic-range-btns button').forEach(btn => {
@@ -56,9 +71,11 @@ async function loadTraffic(page) {
     d.rows.forEach((u, i) => {
       const tr = document.createElement('tr');
       tr.className = 'border-b border-white/5 hover:bg-white/[0.02]';
+      const safeUserId = toSafeInt(u.id, 0);
+      const safeUsername = escHtml(u.username || '-');
       tr.innerHTML = `
         <td class="py-2 px-4 text-[11px] text-gray-500">${offset + i + 1}</td>
-        <td class="py-2 px-4 text-xs"><a href="javascript:void(0)" onclick="showUserDetail(${u.id})" class="text-cyan-400 hover:text-cyan-300 hover:underline cursor-pointer">${u.username}</a></td>
+        <td class="py-2 px-4 text-xs"><a href="javascript:void(0)" onclick="showUserDetail(${safeUserId})" class="text-cyan-400 hover:text-cyan-300 hover:underline cursor-pointer">${safeUsername}</a></td>
         <td class="py-2 px-4 text-xs">${fmtBytes(u.total_up)}</td>
         <td class="py-2 px-4 text-xs">${fmtBytes(u.total_down)}</td>
         <td class="py-2 px-4 text-xs font-medium text-rose-400">${fmtBytes(u.total_up + u.total_down)}</td>
@@ -148,35 +165,44 @@ async function showUserDetail(userId) {
   try {
     const res = await fetch('/admin/api/users/' + userId + '/detail');
     const d = await res.json();
-    if (d.error) { modal.innerHTML = `<div class="glass rounded-2xl p-6"><p class="text-red-400">${d.error}</p></div>`; return; }
+    if (d.error) { modal.innerHTML = `<div class="glass rounded-2xl p-6"><p class="text-red-400">${escHtml(d.error)}</p></div>`; return; }
 
     const u = d.info;
+    const safeUsername = escHtml(u.username || '');
+    const safeCreatedAt = escHtml(u.created_at_display || u.created_at || '未知');
+    const safeLastLogin = escHtml(u.last_login_display || u.last_login || '未知');
+    const safeExpiresAt = escHtml(u.expires_at_display || u.expires_at || '');
+    const safeUserId = toSafeInt(u.id, 0);
+    const safeTrustLevel = toSafeInt(u.trust_level, 0);
     const levelColors = ['text-gray-400','text-blue-400','text-green-400','text-purple-400','text-amber-400'];
     const badges = [];
     if (u.is_admin) badges.push('<span class="px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 text-[10px]">管理员</span>');
-    if (u.is_donor) badges.push('<span class="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-[10px]">🎁 捐赠者</span>');
     if (u.is_blocked) badges.push('<span class="px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 text-[10px]">🚫 封禁</span>');
     if (u.is_frozen) badges.push('<span class="px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 text-[10px]">❄️ 冻结</span>');
 
     const ipsHtml = d.subAccess.ips.length > 0
-      ? d.subAccess.ips.map(ip => `<div class="flex justify-between text-xs py-1 border-b border-white/5"><span class="text-gray-300">${ip.ip}</span><span class="text-gray-500">${ip.count}次 · ${ip.last_access}</span></div>`).join('')
+      ? d.subAccess.ips.map(ip => `<div class="flex justify-between text-xs py-1 border-b border-white/5"><span class="text-gray-300">${escHtml(ip.ip || '')}</span><span class="text-gray-500">${toSafeInt(ip.count, 0)}次 · ${escHtml(ip.last_access_display || ip.last_access || '')}</span></div>`).join('')
       : '<p class="text-gray-600 text-xs">24h内无拉取记录</p>';
 
     const uasHtml = d.subAccess.uas.length > 0
-      ? d.subAccess.uas.map(ua => `<div class="flex justify-between text-xs py-1 border-b border-white/5"><span class="text-gray-300 truncate mr-2" title="${ua.ua}">${ua.ua || '(空)'}</span><span class="text-gray-500 shrink-0">${ua.count}次</span></div>`).join('')
+      ? d.subAccess.uas.map(ua => {
+        const rawUa = ua.ua || '';
+        const safeUa = escHtml(rawUa);
+        return `<div class="flex justify-between text-xs py-1 border-b border-white/5"><span class="text-gray-300 truncate mr-2" title="${safeUa}">${safeUa || '(空)'}</span><span class="text-gray-500 shrink-0">${toSafeInt(ua.count, 0)}次</span></div>`;
+      }).join('')
       : '<p class="text-gray-600 text-xs">无UA记录</p>';
 
     const timelineHtml = d.subAccess.timeline.length > 0
-      ? d.subAccess.timeline.slice(0, 10).map(t => `<div class="text-[11px] py-1 border-b border-white/5 text-gray-400"><span class="text-gray-500">${t.time}</span> · ${t.ip} · <span class="text-gray-600 truncate">${(t.ua || '').slice(0, 40)}</span></div>`).join('')
+      ? d.subAccess.timeline.slice(0, 10).map(t => `<div class="text-[11px] py-1 border-b border-white/5 text-gray-400"><span class="text-gray-500">${escHtml(t.time_display || t.time || '')}</span> · ${escHtml(t.ip || '')} · <span class="text-gray-600 truncate">${escHtml((t.ua || '').slice(0, 40))}</span></div>`).join('')
       : '<p class="text-gray-600 text-xs">无记录</p>';
 
     modal.innerHTML = `
       <div class="glass rounded-2xl p-5 w-[90vw] max-w-lg max-h-[85vh] overflow-y-auto space-y-4">
         <div class="flex items-center justify-between">
           <div>
-            <h3 class="text-white font-semibold">${u.username}</h3>
+            <h3 class="text-white font-semibold">${safeUsername}</h3>
             <div class="flex items-center gap-2 mt-1">
-              <span class="text-[11px] ${levelColors[Math.min(u.trust_level,4)]}">Lv.${u.trust_level}</span>
+              <span class="text-[11px] ${levelColors[Math.min(safeTrustLevel,4)]}">Lv.${safeTrustLevel}</span>
               ${badges.join(' ')}
             </div>
           </div>
@@ -189,8 +215,8 @@ async function showUserDetail(userId) {
         </div>
 
         <div class="text-[11px] text-gray-500 space-y-1">
-          <div>注册: ${u.created_at || '未知'} · 最后活跃: ${u.last_login || '未知'}</div>
-          ${u.expires_at ? '<div>到期: ' + u.expires_at + '</div>' : ''}
+          <div>注册: ${safeCreatedAt} · 最后活跃: ${safeLastLogin}</div>
+          ${u.expires_at ? '<div>到期: ' + safeExpiresAt + '</div>' : ''}
           ${u.traffic_limit ? '<div>流量限额: ' + fmtBytes(u.traffic_limit) + '/天</div>' : ''}
         </div>
 
@@ -210,12 +236,12 @@ async function showUserDetail(userId) {
         </div>
 
         <div class="flex gap-2 pt-2">
-          <button onclick="fetch('/admin/api/users/${u.id}/toggle-block',{method:'POST',headers:{'X-CSRF-Token':_csrf}}).then(r=>r.json()).then(d=>{if(d.ok){showToast(d.message);showUserDetail(${u.id})}})" class="text-xs px-3 py-1.5 rounded-lg ${u.is_blocked ? 'bg-emerald-600/40 text-emerald-300' : 'bg-red-500/20 text-red-400'} hover:opacity-80 transition">${u.is_blocked ? '✅ 解封' : '🚫 封禁'}</button>
-          <button onclick="fetch('/admin/api/users/${u.id}/reset-token',{method:'POST',headers:{'X-CSRF-Token':_csrf}}).then(r=>r.json()).then(d=>{if(d.ok)showToast('订阅已重置')})" class="text-xs px-3 py-1.5 rounded-lg bg-amber-500/20 text-amber-400 hover:opacity-80 transition">🔄 重置订阅</button>
+          <button onclick="fetch('/admin/api/users/${safeUserId}/toggle-block',{method:'POST',headers:{'X-CSRF-Token':_csrf,'Accept':'application/json'}}).then(r=>r.json()).then(d=>{if(d.ok){showToast(d.message);showUserDetail(${safeUserId})}})" class="text-xs px-3 py-1.5 rounded-lg ${u.is_blocked ? 'bg-emerald-600/40 text-emerald-300' : 'bg-red-500/20 text-red-400'} hover:opacity-80 transition">${u.is_blocked ? '✅ 解封' : '🚫 封禁'}</button>
+          <button onclick="fetch('/admin/api/users/${safeUserId}/reset-token',{method:'POST',headers:{'X-CSRF-Token':_csrf,'Accept':'application/json'}}).then(r=>r.json()).then(d=>{if(d.ok)showToast('订阅已重置')})" class="text-xs px-3 py-1.5 rounded-lg bg-amber-500/20 text-amber-400 hover:opacity-80 transition">🔄 重置订阅</button>
         </div>
       </div>
     `;
   } catch (e) {
-    modal.innerHTML = `<div class="glass rounded-2xl p-6"><p class="text-red-400 text-sm">加载失败: ${e.message}</p></div>`;
+    modal.innerHTML = `<div class="glass rounded-2xl p-6"><p class="text-red-400 text-sm">加载失败: ${escHtml(e.message || '未知错误')}</p></div>`;
   }
 }

@@ -2,11 +2,7 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../../services/database');
 const agentWs = require('../../services/agent-ws');
-
-function parseIntId(raw) {
-  const n = Number(raw);
-  return Number.isInteger(n) && n > 0 ? n : null;
-}
+const { parseIntId } = require('../../utils/validators');
 
 const router = express.Router();
 
@@ -20,7 +16,7 @@ router.post('/agents/:nodeId/command', async (req, res) => {
   const command = req.body;
   if (!command || !command.type) return res.status(400).json({ error: '缺少 command.type' });
   const result = await agentWs.sendCommand(nodeId, command);
-  db.addAuditLog(req.user.id, 'agent_command', `节点#${nodeId} 指令: ${command.type}`, req.ip);
+  db.addAuditLog(req.user.id, 'agent_command', `节点#${nodeId} 指令: ${command.type}`, req.clientIp || req.ip);
   res.json(result);
 });
 
@@ -44,7 +40,7 @@ router.post('/agents/update-all', async (req, res) => {
     req.user.id,
     'agent_update_all',
     `批量更新 Agent: 总计${agents.length}，成功${successCount}，失败${failList.length}${failSummary}`,
-    req.ip
+    req.clientIp || req.ip
   );
 
   res.json({ ok: true, results, summary: { total: agents.length, success: successCount, failed: failList.length } });
@@ -57,7 +53,7 @@ router.post('/agent-token/regenerate', (req, res) => {
   }
   const globalToken = uuidv4();
   db.setSetting('agent_token', globalToken);
-  db.addAuditLog(req.user.id, 'agent_token_regen', `重新生成所有节点 Agent Token (${nodes.length} 个)`, req.ip);
+  db.addAuditLog(req.user.id, 'agent_token_regen', `重新生成所有节点 Agent Token (${nodes.length} 个)`, req.clientIp || req.ip);
   res.json({ token: globalToken, nodesUpdated: nodes.length });
 });
 

@@ -60,18 +60,33 @@ function setupAuth(app) {
 // 登录检查中间件
 // 用户活跃时间更新缓存（节流5分钟，避免频繁写库）
 const _lastActiveCache = new Map();
+const LAST_ACTIVE_CACHE_TTL_MS = 30 * 60 * 1000;
+const LAST_ACTIVE_CACHE_MAX_ENTRIES = 50000;
+
+function cleanupLastActiveCache(now = Date.now()) {
+  for (const [uid, ts] of _lastActiveCache) {
+    if (now - ts > LAST_ACTIVE_CACHE_TTL_MS) _lastActiveCache.delete(uid);
+  }
+  if (_lastActiveCache.size <= LAST_ACTIVE_CACHE_MAX_ENTRIES) return;
+  const sorted = [..._lastActiveCache.entries()].sort((a, b) => a[1] - b[1]);
+  const removeCount = _lastActiveCache.size - LAST_ACTIVE_CACHE_MAX_ENTRIES;
+  for (let i = 0; i < removeCount; i++) {
+    _lastActiveCache.delete(sorted[i][0]);
+  }
+}
 
 function requireAuth(req, res, next) {
   if (req.isAuthenticated() && !req.user.is_blocked) {
     // 更新最后活跃时间（每5分钟最多写一次）
     const userId = req.user.id;
     const now = Date.now();
+    cleanupLastActiveCache(now);
     const last = _lastActiveCache.get(userId) || 0;
     if (now - last > 5 * 60 * 1000) {
       _lastActiveCache.set(userId, now);
       try {
         const db = require('../services/database');
-        db.getDb().prepare("UPDATE users SET last_login = datetime('now', 'localtime') WHERE id = ?").run(userId);
+        db.getDb().prepare("UPDATE users SET last_login = datetime('now') WHERE id = ?").run(userId);
       } catch {}
     }
     return next();

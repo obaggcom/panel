@@ -1,4 +1,9 @@
 const db = require('./database');
+const { formatDateTimeInTimeZone } = require('../utils/time');
+
+function nowShanghaiText() {
+  return formatDateTimeInTimeZone(new Date(), 'Asia/Shanghai', true);
+}
 
 function getConfig() {
   const token = db.getSetting('tg_bot_token');
@@ -22,15 +27,15 @@ async function send(text) {
 const notify = {
   nodeDown(nodeName) {
     if (db.getSetting('tg_on_node_down') !== 'true') return;
-    send(`🔴 <b>节点离线</b>\n节点: ${nodeName}\n时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`).catch(() => {});
+    send(`🔴 <b>节点离线</b>\n节点: ${nodeName}\n时间: ${nowShanghaiText()}`).catch(() => {});
   },
   nodeUp(nodeName) {
     if (db.getSetting('tg_on_node_down') !== 'true') return;
-    send(`🟢 <b>节点恢复</b>\n节点: ${nodeName}\n时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`).catch(() => {});
+    send(`🟢 <b>节点恢复</b>\n节点: ${nodeName}\n时间: ${nowShanghaiText()}`).catch(() => {});
   },
   nodeBlocked(nodeName, action) {
     if (db.getSetting('tg_on_node_blocked') !== 'true') return;
-    send(`🧱 <b>节点疑似被墙</b>\n节点: ${nodeName}\n动作: ${action || '等待处理'}\n时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`).catch(() => {});
+    send(`🧱 <b>节点疑似被墙</b>\n节点: ${nodeName}\n动作: ${action || '等待处理'}\n时间: ${nowShanghaiText()}`).catch(() => {});
   },
   rotate(result) {
     if (db.getSetting('tg_on_rotate') !== 'true') return;
@@ -55,12 +60,12 @@ const notify = {
     if (profile?.name && profile.name !== username) msg += `昵称: ${profile.name}\n`;
     msg += `等级: Lv${lv} ${lvNames[lv] || ''}\n`;
     msg += `总用户: ${total}\n`;
-    msg += `时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`;
+    msg += `时间: ${nowShanghaiText()}`;
     send(msg).catch(() => {});
   },
   deploy(nodeName, success, detail) {
     if (db.getSetting('tg_on_deploy') !== 'true') return;
-    send(`${success ? '✅' : '❌'} <b>节点部署${success ? '成功' : '失败'}</b>\n节点: ${nodeName}\n${detail || ''}\n时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`).catch(() => {});
+    send(`${success ? '✅' : '❌'} <b>节点部署${success ? '成功' : '失败'}</b>\n节点: ${nodeName}\n${detail || ''}\n时间: ${nowShanghaiText()}`).catch(() => {});
   },
   ops(msg) {
     if (db.getSetting('tg_on_ops') !== 'true') return;

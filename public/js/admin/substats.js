@@ -27,7 +27,7 @@ async function loadSubStats(page) {
         '<td class="py-2 text-white">' + escapeHtml(u.username) + ' <span class="text-gray-600">ID:' + escapeHtml(u.user_id) + '</span></td>' +
         '<td class="text-center text-gray-300">' + escapeHtml(u.pull_count) + '</td>' +
         '<td class="text-center text-gray-300">' + escapeHtml(u.ip_count) + '</td>' +
-        '<td class="text-center text-gray-400">' + escapeHtml(u.last_access || '-') + '</td>' +
+        '<td class="text-center text-gray-400">' + escapeHtml(u.last_access_display || u.last_access || '-') + '</td>' +
         '<td class="text-center text-gray-400">' + escapeHtml(u.avg_interval_sec) + 's</td>' +
         '<td class="text-center">' + riskBadge(u.risk_level) + '</td>' +
         '<td class="text-right"><button onclick="showSubStatDetail(' + parseInt(u.user_id) + ',' + parseInt(hours) + ')" class="text-rose-400 hover:text-rose-300">详情</button></td></tr>'
@@ -53,11 +53,11 @@ async function showSubStatDetail(userId, hours) {
     const d = await res.json();
     let html = '<div class="grid grid-cols-1 md:grid-cols-3 gap-4">';
     html += '<div><h4 class="text-gray-400 text-xs mb-2">IP 分布 (' + escapeHtml(d.ips.length) + ')</h4><div class="space-y-1">' +
-      d.ips.map(ip => '<div class="flex justify-between p-1.5 rounded bg-black/20 text-xs"><span class="text-gray-300 font-mono">' + escapeHtml(ip.ip) + '</span><span class="text-gray-500">' + escapeHtml(ip.count) + '次 ' + escapeHtml(ip.last_access) + '</span></div>').join('') + '</div></div>';
+      d.ips.map(ip => '<div class="flex justify-between p-1.5 rounded bg-black/20 text-xs"><span class="text-gray-300 font-mono">' + escapeHtml(ip.ip) + '</span><span class="text-gray-500">' + escapeHtml(ip.count) + '次 ' + escapeHtml(ip.last_access_display || ip.last_access || '') + '</span></div>').join('') + '</div></div>';
     html += '<div><h4 class="text-gray-400 text-xs mb-2">UA TOP</h4><div class="space-y-1">' +
       d.uas.map(ua => '<div class="p-1.5 rounded bg-black/20 text-xs"><span class="text-gray-300 break-all">' + escapeHtml(ua.ua || '(empty)') + '</span> <span class="text-gray-500">' + escapeHtml(ua.count) + '次</span></div>').join('') + '</div></div>';
     html += '<div><h4 class="text-gray-400 text-xs mb-2">最近拉取</h4><div class="space-y-1">' +
-      d.timeline.map(t => '<div class="p-1.5 rounded bg-black/20 text-xs"><span class="text-gray-400">' + escapeHtml(t.time) + '</span> <span class="text-gray-300 font-mono">' + escapeHtml(t.ip) + '</span></div>').join('') + '</div></div>';
+      d.timeline.map(t => '<div class="p-1.5 rounded bg-black/20 text-xs"><span class="text-gray-400">' + escapeHtml(t.time_display || t.time || '') + '</span> <span class="text-gray-300 font-mono">' + escapeHtml(t.ip) + '</span></div>').join('') + '</div></div>';
     html += '</div>';
     container.innerHTML = html;
     document.getElementById('substats-detail-title').textContent = '用户 #' + userId + ' 详情';
@@ -77,6 +77,6 @@ async function showDetail(userId, hours) {
   container.innerHTML = '<div class="space-y-1">' + ips.map(ip =>
     '<div class="flex items-center justify-between p-2 rounded-lg bg-black/20 text-xs">' +
     '<span class="text-gray-300 font-mono">' + escapeHtml(ip.ip) + '</span>' +
-    '<div class="flex gap-3"><span class="text-gray-500">拉取 ' + escapeHtml(ip.count) + ' 次</span><span class="text-gray-600">' + escapeHtml(ip.last_access) + '</span></div></div>'
+    '<div class="flex gap-3"><span class="text-gray-500">拉取 ' + escapeHtml(ip.count) + ' 次</span><span class="text-gray-600">' + escapeHtml(ip.last_access_display || ip.last_access || '') + '</span></div></div>'
   ).join('') + '</div>';
 }

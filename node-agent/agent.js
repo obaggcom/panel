@@ -212,16 +212,6 @@ async function getXrayStatus() {
   return stdout === 'active';
 }
 
-// 计算 xray 配置文件的 SHA256 哈希（用于捐赠节点防篡改校验）
-function getConfigHash() {
-  try {
-    const content = fs.readFileSync(XRAY_CONFIG_PATH, 'utf8');
-    return crypto.createHash('sha256').update(content).digest('hex');
-  } catch {
-    return null;
-  }
-}
-
 async function getXrayTraffic() {
   const { ok, stdout } = await run(
     'xray api statsquery --server=127.0.0.1:10085 -pattern "user>>>" -reset 2>/dev/null'
@@ -232,19 +222,11 @@ async function getXrayTraffic() {
     if (!data.stat) return [];
     const records = [];
     for (const stat of data.stat) {
-      // 支持两种 email 格式：
-      // 普通节点: user-{userId}@panel  捐赠节点: t-{uuidPrefix}@p
-      const m = stat.name.match(/user>>>(user-(\d+)@panel|t-([a-f0-9]{8})@p)>>>traffic>>>(uplink|downlink)/);
+      const m = stat.name.match(/user>>>user-(\d+)@panel>>>traffic>>>(uplink|downlink)/);
       if (m) {
         const value = parseInt(stat.value) || 0;
         if (value <= 0) continue;
-        if (m[2]) {
-          // 普通格式：直接用 userId
-          records.push({ userId: parseInt(m[2]), direction: m[4], value });
-        } else if (m[3]) {
-          // 捐赠脱敏格式：上报 tag，面板端反查
-          records.push({ tag: m[3], direction: m[4], value });
-        }
+        records.push({ userId: parseInt(m[1]), direction: m[2], value });
       }
     }
     return records;
@@ -264,8 +246,6 @@ async function report() {
       getDiskUsage(),
     ]);
     const sys = getSystemInfo();
-    const configHash = getConfigHash();
-
     sendMsg({
       type: 'report',
       ts: Date.now(),
@@ -279,7 +259,6 @@ async function report() {
       loadAvg: sys.loadavg,
       memUsage: sys.memory,
       diskUsage: disk,
-      configHash,
     });
   } catch (e) {
     log('上报', `失败: ${e.message}`);

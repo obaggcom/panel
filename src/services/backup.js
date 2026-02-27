@@ -12,17 +12,19 @@ const RETENTION_DAYS = 7;
 /**
  * 执行一次备份（使用 better-sqlite3 的 backup API）
  */
-function performBackup(db) {
+async function performBackup(db) {
   fs.mkdirSync(BACKUP_DIR, { recursive: true });
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   const backupPath = path.join(BACKUP_DIR, `panel-${timestamp}.db`);
 
   try {
-    db.backup(backupPath);
+    await db.backup(backupPath);
     logger.info({ backupPath }, '数据库备份完成');
     cleanOldBackups();
+    return { ok: true, backupPath };
   } catch (err) {
-    logger.error({ err }, '数据库备份失败');
+    logger.error({ err, backupPath }, '数据库备份失败');
+    return { ok: false, error: err.message || '数据库备份失败' };
   }
 }
 

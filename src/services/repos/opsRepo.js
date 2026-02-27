@@ -5,7 +5,7 @@ function init(deps) {
 }
 
 function addDiagnosis(nodeId, diagInfo) {
-  return _getDb().prepare("INSERT INTO ops_diagnosis (node_id, diag_info, created_at) VALUES (?, ?, datetime('now', 'localtime'))").run(nodeId, diagInfo);
+  return _getDb().prepare("INSERT INTO ops_diagnosis (node_id, diag_info, created_at) VALUES (?, ?, datetime('now'))").run(nodeId, diagInfo);
 }
 
 function updateDiagnosis(id, fields) {
@@ -31,7 +31,7 @@ function getAllDiagnoses(limit = 20) {
 // AI 运营日记
 function addDiaryEntry(content, mood = '🐱', category = 'ops') {
   return _getDb().prepare(
-    "INSERT INTO ops_diary (content, mood, category, created_at) VALUES (?, ?, ?, datetime('now', 'localtime'))"
+    "INSERT INTO ops_diary (content, mood, category, created_at) VALUES (?, ?, ?, datetime('now'))"
   ).run(content, mood, category);
 }
 
@@ -47,7 +47,7 @@ function getDiaryStats() {
   const total = _getDb().prepare('SELECT COUNT(*) as c FROM ops_diary').get().c;
   const firstEntry = _getDb().prepare('SELECT created_at FROM ops_diary ORDER BY created_at ASC LIMIT 1').get();
   const todayCount = _getDb().prepare(
-    "SELECT COUNT(*) as c FROM ops_diary WHERE date(created_at) = date('now')"
+    "SELECT COUNT(*) as c FROM ops_diary WHERE date(created_at, '+8 hours') = date('now', '+8 hours')"
   ).get().c;
   return { total, todayCount, firstEntry: firstEntry?.created_at || null };
 }

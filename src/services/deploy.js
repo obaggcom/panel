@@ -85,9 +85,7 @@ function generateNodeName(geo, existingNodes, isHomeNetwork = false) {
 // ========== 生成 xray 多用户配置 ==========
 
 // 生成 xray email 标签（用于流量统计）
-// 捐赠节点使用 uuid 前缀脱敏，防止节点拥有者看到 user_id
-function makeEmail(userId, uuid, isDonation) {
-  if (isDonation) return `t-${uuid.slice(0, 8)}@p`;
+function makeEmail(userId) {
   return `user-${userId}@panel`;
 }
 
@@ -167,9 +165,7 @@ async function sftpWriteFile(ssh, remotePath, content) {
 
 // 将配置推送到节点并重启 xray（优先通过 Agent，SSH 后备）
 async function pushConfigToNode(node, config) {
-  const db = require('./database');
   const configJson = typeof config === 'string' ? config : JSON.stringify(config, null, 2);
-  const configHash = crypto.createHash('sha256').update(configJson).digest('hex');
 
   // 优先通过 Agent 推送
   const agentWs = require('./agent-ws'); // 延迟加载避免循环依赖
@@ -180,8 +176,6 @@ async function pushConfigToNode(node, config) {
         config: config,
       });
       if (result.success) {
-        // 记录期望配置哈希，用于捐赠节点防篡改校验
-        db.setSetting(`donate_cfg_hash_${node.id}`, configHash);
         return true;
       }
       console.log(`[推送配置] ${node.name} Agent 推送失败: ${result.error}，回退 SSH`);
@@ -209,7 +203,6 @@ async function pushConfigToNode(node, config) {
     const result = await ssh.execCommand('systemctl restart xray && sleep 1 && systemctl is-active --quiet xray && echo OK || echo FAIL');
 
     const ok = result.stdout.trim() === 'OK';
-    if (ok) db.setSetting(`donate_cfg_hash_${node.id}`, configHash);
     return ok;
   } catch (err) {
     console.error(`[推送配置] ${node.name} SSH 失败: ${err.message}`);
@@ -227,7 +220,7 @@ async function syncNodeConfig(node, db) {
   // SS 节点：使用 SS 多用户配置
   if (node.protocol === 'ss') {
     const clients = userUuids.map(u => ({
-      password: u.uuid, email: makeEmail(u.user_id, u.uuid, node.is_donation)
+      password: u.uuid, email: makeEmail(u.user_id)
     }));
     const config = buildSsXrayConfig(node.port, clients, node.ss_method || 'aes-256-gcm');
 
@@ -237,7 +230,7 @@ async function syncNodeConfig(node, db) {
       const vlessUuids = db.getNodeAllUserUuids(peerNode.id);
       if (vlessUuids.length > 0) {
         const vlessClients = vlessUuids.map(u => ({
-          id: u.uuid, level: 0, email: makeEmail(u.user_id, u.uuid, node.is_donation)
+          id: u.uuid, level: 0, email: makeEmail(u.user_id)
         }));
         let outbounds;
         if (peerNode.socks5_host) {
@@ -257,7 +250,7 @@ async function syncNodeConfig(node, db) {
 
   // VLESS 节点
   const clients = userUuids.map(u => ({
-    id: u.uuid, level: 0, email: makeEmail(u.user_id, u.uuid, node.is_donation)
+    id: u.uuid, level: 0, email: makeEmail(u.user_id)
   }));
 
   let outbounds;
@@ -283,7 +276,7 @@ async function syncNodeConfig(node, db) {
     const ssUuids = db.getNodeAllUserUuids(peerNode.id);
     if (ssUuids.length > 0) {
       const ssClients = ssUuids.map(u => ({
-        password: u.uuid, email: makeEmail(u.user_id, u.uuid, node.is_donation)
+        password: u.uuid, email: makeEmail(u.user_id)
       }));
       const dualConfig = buildDualXrayConfig(node.port, peerNode.port, clients, ssClients, peerNode.ss_method || 'aes-256-gcm', outbounds, realityOpts);
       return await pushConfigToNode(node, dualConfig);
@@ -427,7 +420,7 @@ async function deployNode(sshInfo, db) {
     // 生成多用户配置
     const userUuids = db.getNodeAllUserUuids(nodeId);
     const clients = userUuids.length > 0
-      ? userUuids.map(u => ({ id: u.uuid, level: 0, email: makeEmail(u.user_id, u.uuid, false) }))
+      ? userUuids.map(u => ({ id: u.uuid, level: 0, email: makeEmail(u.user_id) }))
       : [{ id: uuid, level: 0, email: 'default@panel' }];
 
     let outbounds;
@@ -698,7 +691,7 @@ async function deploySsNode(sshInfo, db) {
     // 生成多用户 SS 配置（带 stats）
     const userUuids = db.getNodeAllUserUuids(nodeId);
     const clients = userUuids.length > 0
-      ? userUuids.map(u => ({ password: u.uuid, email: makeEmail(u.user_id, u.uuid, false) }))
+      ? userUuids.map(u => ({ password: u.uuid, email: makeEmail(u.user_id) }))
       : [{ password: ssPassword, email: 'default@panel' }];
 
     const config = buildSsXrayConfig(port, clients, ssMethod);
@@ -843,12 +836,12 @@ async function deployDualNode(sshInfo, db) {
     // 构建双协议配置
     const vlessUuids = db.getNodeAllUserUuids(vlessNodeId);
     const vlessClients = vlessUuids.length > 0
-      ? vlessUuids.map(u => ({ id: u.uuid, level: 0, email: makeEmail(u.user_id, u.uuid, false) }))
+      ? vlessUuids.map(u => ({ id: u.uuid, level: 0, email: makeEmail(u.user_id) }))
       : [{ id: uuid, level: 0, email: 'default@panel' }];
 
     const ssUuids = db.getNodeAllUserUuids(ssNodeId);
     const ssClients = ssUuids.length > 0
-      ? ssUuids.map(u => ({ password: u.uuid, email: makeEmail(u.user_id, u.uuid, false) }))
+      ? ssUuids.map(u => ({ password: u.uuid, email: makeEmail(u.user_id) }))
       : [{ password: ssPassword, email: 'default@panel' }];
 
     let outbounds;

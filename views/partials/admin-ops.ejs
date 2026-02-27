@@ -194,7 +194,7 @@
 
       // 巡检状态
       const lp = dash.lastPatrol;
-      document.getElementById('ops-last-patrol').textContent = lp ? lp.replace('T', ' ').slice(0, 16) : '从未';
+      document.getElementById('ops-last-patrol').textContent = dash.lastPatrolDisplay || '从未';
       document.getElementById('ops-patrol-count').textContent = dash.todayStats?.patrols || 0;
       document.getElementById('ops-swap-count').textContent = dash.todayStats?.swaps || 0;
       document.getElementById('ops-fix-count').textContent = dash.todayStats?.fixes || 0;
@@ -206,7 +206,7 @@
       } else {
         tl.innerHTML = events.map(e => {
           const ei = EVENT_ICONS[e.action] || { icon: '📋', color: 'text-gray-400' };
-          const time = (e.created_at || '').replace('T', ' ').slice(0, 16);
+          const time = e.created_at_display || '';
           return `<div class="flex items-start gap-3 p-2 rounded-lg bg-black/20 hover:bg-white/5 transition">
             <span class="text-lg flex-shrink-0">${ei.icon}</span>
             <div class="flex-1 min-w-0">

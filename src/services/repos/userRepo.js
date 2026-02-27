@@ -1,4 +1,5 @@
 const { v4: uuidv4 } = require('uuid');
+const { toSqlUtc } = require('../../utils/time');
 
 let _getDb, _getSetting, _addAuditLog, _ensureUserHasAllNodeUuids, _removeFromRegisterWhitelist;
 
@@ -15,7 +16,7 @@ function findOrCreateUser(profile) {
   if (existing) {
     const wasFrozen = existing.is_frozen;
     _getDb().prepare(`
-      UPDATE users SET username = ?, name = ?, avatar_url = ?, trust_level = ?, email = ?, is_frozen = 0, last_login = datetime('now', 'localtime')
+      UPDATE users SET username = ?, name = ?, avatar_url = ?, trust_level = ?, email = ?, is_frozen = 0, last_login = datetime('now')
       WHERE nodeloc_id = ?
     `).run(profile.username, profile.name, profile.avatar_url, profile.trust_level, profile.email, profile.id);
     const user = _getDb().prepare('SELECT * FROM users WHERE nodeloc_id = ?').get(profile.id);
@@ -33,7 +34,7 @@ function findOrCreateUser(profile) {
 
   _getDb().prepare(`
     INSERT INTO users (nodeloc_id, username, name, avatar_url, trust_level, email, sub_token, is_admin, traffic_limit, last_login)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
   `).run(profile.id, profile.username, profile.name, profile.avatar_url, profile.trust_level, profile.email, subToken, isAdmin, defaultLimit);
 
   const newUser = _getDb().prepare('SELECT * FROM users WHERE nodeloc_id = ?').get(profile.id);
@@ -65,9 +66,10 @@ function getUserCount() {
 
 function getAllUsers() {
   return _getDb().prepare(`
-    SELECT u.*, COALESCE(SUM(t.uplink),0)+COALESCE(SUM(t.downlink),0) as total_traffic
-    FROM users u LEFT JOIN traffic_daily t ON u.id = t.user_id
-    GROUP BY u.id ORDER BY total_traffic DESC
+    SELECT u.*, COALESCE(tut.total_up, 0) + COALESCE(tut.total_down, 0) as total_traffic
+    FROM users u
+    LEFT JOIN traffic_user_total tut ON u.id = tut.user_id
+    ORDER BY total_traffic DESC
   `).all();
 }
 
@@ -80,10 +82,11 @@ function getAllUsersPaged(limit = 20, offset = 0, search = '', sortBy = 'total_t
   const orderCol = allowedSorts[sortBy] || 'total_traffic';
   const dir = sortDir === 'ASC' ? 'ASC' : 'DESC';
   const rows = _getDb().prepare(`
-    SELECT u.*, COALESCE(SUM(t.uplink),0)+COALESCE(SUM(t.downlink),0) as total_traffic
-    FROM users u LEFT JOIN traffic_daily t ON u.id = t.user_id
+    SELECT u.*, COALESCE(tut.total_up, 0) + COALESCE(tut.total_down, 0) as total_traffic
+    FROM users u
+    LEFT JOIN traffic_user_total tut ON u.id = tut.user_id
     ${where}
-    GROUP BY u.id ORDER BY ${orderCol} ${dir}
+    ORDER BY ${orderCol} ${dir}
     LIMIT @limit OFFSET @offset
   `).all({ limit, offset, search });
   const total = _getDb().prepare(`SELECT COUNT(*) as c FROM users u ${where}`).get({ search }).c;
@@ -102,9 +105,9 @@ function isTrafficExceeded(userId) {
   const user = getUserById(userId);
   if (!user || !user.traffic_limit) return false;
   const traffic = _getDb().prepare(
-    'SELECT COALESCE(SUM(uplink), 0) + COALESCE(SUM(downlink), 0) as total FROM traffic_daily WHERE user_id = ?'
+    'SELECT COALESCE(total_up, 0) + COALESCE(total_down, 0) as total FROM traffic_user_total WHERE user_id = ?'
   ).get(userId);
-  return traffic.total >= user.traffic_limit;
+  return (traffic?.total || 0) >= user.traffic_limit;
 }
 
 function freezeUser(id) {
@@ -121,7 +124,7 @@ function unfreezeUser(id) {
 }
 
 function autoFreezeInactiveUsers(days = 15) {
-  const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+  const cutoff = toSqlUtc(new Date(Date.now() - days * 86400000));
   const users = _getDb().prepare(
     "SELECT id, username FROM users WHERE is_frozen = 0 AND is_blocked = 0 AND is_admin = 0 AND last_login < ?"
   ).all(cutoff);
@@ -143,7 +146,7 @@ function setUserExpiry(userId, expiresAt) {
 }
 
 function autoFreezeExpiredUsers() {
-  const now = new Date().toISOString();
+  const now = toSqlUtc();
   const users = _getDb().prepare(
     "SELECT id, username FROM users WHERE is_frozen = 0 AND is_blocked = 0 AND expires_at IS NOT NULL AND expires_at < ?"
   ).all(now);

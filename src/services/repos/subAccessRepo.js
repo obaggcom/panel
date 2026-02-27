@@ -1,13 +1,12 @@
-let _getDb, _getUserById;
+let _getDb;
 
 function init(deps) {
   _getDb = deps.getDb;
-  _getUserById = deps.getUserById;
 }
 
 function logSubAccess(userId, ip, ua) {
   // 仅记录访问；历史清理由 app.js 的定时任务统一处理，避免高频订阅路径触发 DELETE
-  _getDb().prepare("INSERT INTO sub_access_log (user_id, ip, ua, created_at) VALUES (?, ?, ?, datetime('now', 'localtime'))").run(userId, ip, ua || '');
+  _getDb().prepare("INSERT INTO sub_access_log (user_id, ip, ua, created_at) VALUES (?, ?, ?, datetime('now'))").run(userId, ip, ua || '');
 }
 
 function getSubAccessIPs(userId, hours = 24) {
@@ -34,7 +33,9 @@ function getSubAccessStats(hours = 24, limit = 50, offset = 0, onlyHigh = false,
   const orderBy = orderMap[sort] || orderMap.count;
 
   const baseWhere = `WHERE created_at > datetime('now', '-' || @hours || ' hours')`;
+  const baseWhereWithAlias = `WHERE l.created_at > datetime('now', '-' || @hours || ' hours')`;
   const havingClause = onlyHigh ? 'HAVING COUNT(*) > 100 OR COUNT(DISTINCT ip) > 8' : '';
+  const havingClauseWithAlias = onlyHigh ? 'HAVING COUNT(*) > 100 OR COUNT(DISTINCT l.ip) > 8' : '';
 
   const countRow = _getDb().prepare(`
     SELECT COUNT(*) as total FROM (
@@ -45,22 +46,24 @@ function getSubAccessStats(hours = 24, limit = 50, offset = 0, onlyHigh = false,
 
   const rows = _getDb().prepare(`
     SELECT
-      user_id,
+      l.user_id,
+      COALESCE(u.username, '未知') as username,
       COUNT(*) as pull_count,
-      COUNT(DISTINCT ip) as ip_count,
-      MAX(created_at) as last_access,
+      COUNT(DISTINCT l.ip) as ip_count,
+      MAX(l.created_at) as last_access,
       ROUND((@hours * 3600.0) / MAX(COUNT(*), 1), 1) as avg_interval_sec
-    FROM sub_access_log ${baseWhere}
-    GROUP BY user_id ${havingClause}
+    FROM sub_access_log l
+    LEFT JOIN users u ON u.id = l.user_id
+    ${baseWhereWithAlias}
+    GROUP BY l.user_id ${havingClauseWithAlias}
     ORDER BY ${orderBy}
     LIMIT @limit OFFSET @offset
   `).all({ hours, limit, offset });
 
-  const data = rows.map(r => {
-    const user = _getUserById(r.user_id);
+  const data = rows.map((r) => {
     const risk = (r.pull_count > 100 || r.ip_count > 8) ? 'high'
       : (r.pull_count >= 30 || r.ip_count >= 4) ? 'mid' : 'low';
-    return { ...r, username: user?.username || '未知', risk_level: risk };
+    return { ...r, risk_level: risk };
   });
 
   return { total: countRow.total, data };

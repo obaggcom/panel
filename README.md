@@ -1,188 +1,433 @@
-# 🍑 小姨子的诱惑
+# VLESS Panel
 
-VLESS 代理面板，支持多节点管理、AWS 云集成、AI 无人值守运维。
+Node.js + Express + SQLite 的 VLESS/SS 节点管理面板，包含 NodeLoc OAuth 登录、订阅分发、节点部署、Agent 通道、流量统计、AWS 联动与后台运维能力。
 
-## ✨ 功能一览
+## 目录
 
-### 🌐 节点管理
-- **一键部署** — 输入 IP + SSH 密码，自动安装 Xray + Reality + Agent
-- **自动命名** — IP 地理检测，生成名字如「🇯🇵 东京-波光粼粼」
-- **SOCKS5 落地** — 家宽中转，🏠 前缀标识
-- **节点等级** — Lv.0-4，按用户信任等级分配节点
-- **自动轮换** — 定期换端口+UUID，每 7 天重置订阅 Token
+- [项目定位](#项目定位)
+- [核心能力](#核心能力)
+- [系统架构](#系统架构)
+- [运行要求](#运行要求)
+- [快速开始](#快速开始)
+- [环境变量](#环境变量)
+- [部署建议](#部署建议)
+- [管理后台功能](#管理后台功能)
+- [接口总览](#接口总览)
+- [定时任务](#定时任务)
+- [数据与备份](#数据与备份)
+- [安全机制](#安全机制)
+- [测试与质量](#测试与质量)
+- [常见运维操作](#常见运维操作)
+- [目录结构](#目录结构)
+- [相关文档](#相关文档)
 
-### 👥 用户系统
-- **NodeLoc OAuth** 登录，自动同步头像、等级
-- **封禁/解封** — 配置实时同步到所有节点
-- **流量限额** — 单用户/全局默认，超额自动冻结
-- **白名单** — 注册白名单 + 节点白名单（无视等级限制）
-- **注册限制** — 可设最大注册人数
+## 项目定位
 
-### 📡 订阅系统
-- **自动识别客户端** — v2rayN/Clash/Surge/Shadowrocket
-- **强制格式** — `?type=clash|surge|v2ray`
-- **流量信息** — 响应头含 `Subscription-Userinfo`
-- **防滥用** — 限流 + 多 IP 拉取检测 + TG 通知
+本项目面向“自建多节点代理”的运维场景，目标是把以下流程放到一个面板里完成：
 
-### ☁️ AWS 集成
-- **EC2 + Lightsail** — 换 IP、启停、终止、创建实例
-- **节点绑定** — 绑定后支持一键换 IP、被墙自动换 IP
-- **一键创建部署** — 选账号+区域+规格 → 自动创建+部署+绑定
-- **多账号** — 每个账号可配独立 SOCKS5 代理
-- **加密存储** — AK/SK 使用 AES-256-GCM 加密
+- 用户登录与授权
+- 节点部署、更新、轮换、状态追踪
+- 订阅分发与反滥用控制
+- 用户与流量管理
+- AWS 实例联动（创建、启停、换 IP、绑定）
+- 备份、恢复、审计与通知
 
-### 🤝 Agent 系统
-- **WebSocket 长连接** — 每节点一个轻量 Agent（Node.js 单文件）
-- **定时上报** — Xray 状态、按用户流量统计、中国可达性、系统负载
-- **远程指令** — ping、restart_xray、update_config、exec、self_update
-- **自愈机制** — Xray 自动重启 + 断线重连 + Watchdog 兜底
-- **TLS 严格校验** — 默认校验服务端证书，可通过 `AGENT_INSECURE_TLS=true` 临时放宽（仅调试用）
-- **exec 白名单** — 默认仅允许安全命令前缀，支持通过 config 追加自定义白名单
+## 核心能力
 
-### 🧠 AI 运维（OpenClaw 集成）
-- **无人值守** — 本机 OpenClaw 直接操作 sqlite3/pm2/ssh，无中间层
-- **面板守护** — PM2 进程挂了自动重启
-- **节点巡检** — TCP 探测端口，检测是否正常
-- **被墙自动换 IP** — 端口不通 + 有 AWS 绑定 → 自动换 IP
-- **节点自动修复** — Agent/SSH 重启 Xray + 同步配置
-- **自动扩缩容** — 节点不足时自动创建 AWS 实例并部署
-- **运营日记** — 自动记录每次运维操作，见证面板成长
+### 1) 登录与用户体系
 
-### 🔔 通知
-- **Telegram** — 节点上下线、被墙、轮换、部署、流量超标、订阅异常、新用户注册
+- NodeLoc OAuth2 登录（`/auth/nodeloc` + `/auth/callback`）
+- 首个注册用户自动设为管理员
+- 用户状态：`is_admin / is_blocked / is_frozen`
+- 支持用户到期时间 `expires_at`
+- 支持注册白名单与节点白名单
 
-### 🔐 安全
-- AES-256-GCM 加密存储敏感信息
-- CSRF 防护、HSTS、Helmet 安全头
-- 订阅接口限流，防暴力猜测
+### 2) 节点与配置同步
 
-## 🛠 技术栈
+- 支持 VLESS、SS、双协议部署
+- 支持 Reality 参数写入（public/private key, short id, sni）
+- 支持 SOCKS5 出口链路（节点级配置）
+- 节点配置可通过 Agent 下发，失败回退 SSH
+- 支持节点分组/标签、等级门槛、手动节点管理
 
-| 层 | 技术 |
-|---|---|
-| 后端 | Node.js + Express + better-sqlite3 |
-| 前端 | EJS + Tailwind CSS（暗色玫瑰主题） |
-| 代理 | Xray (VLESS + Reality + XTLS Vision) |
-| 节点管理 | Agent (WebSocket) + SSH 后备 |
-| 云集成 | AWS SDK v3 (EC2 + Lightsail) |
-| AI 运维 | OpenClaw |
-| 部署 | PM2 + Nginx + Cloudflare |
+### 3) Agent 通道与健康数据
 
-## 🚀 部署
+- WebSocket Agent 服务端：`/ws/agent`
+- 节点 Agent 在线池、ping/pong、命令回执、超时处理
+- Agent 上报：`xrayAlive / cnReachable / ipv6Reachable / trafficRecords`
+- 节点失败防抖（连续失败阈值后才判离线）
+- 手动节点连续失败自动移除
+
+### 4) 订阅系统
+
+- 主订阅：`/sub/:token`（VLESS）
+- IPv6/SS 订阅：`/sub6/:token`
+- 自动识别客户端并生成：v2ray base64 / clash yaml / sing-box json
+- 支持 `?type=clash|singbox|v2ray` 强制格式
+- 响应头包含 `Subscription-Userinfo`
+- 订阅二维码：`/sub-qr`、`/sub6-qr`
+
+### 5) 订阅风控与反滥用
+
+- 空 UA 拒绝
+- 订阅接口限流（IP 级）
+- Token 行为风控（窗口频率、IP/UA 切换）
+- 模式可选：`off | observe | enforce`
+- 滥用访问触发审计和 Telegram 通知
+
+### 6) 流量统计与配额
+
+- 原始流量记录：`traffic`
+- 日聚合：`traffic_daily`
+- 用户总量汇总：`traffic_user_total`（用于后台列表高效排序）
+- 用户流量配额（单用户 + 全局默认值）
+- 今日/近 7 天/近 30 天/自定义日期查询
+
+### 7) AWS 联动
+
+- 多账号配置（AK/SK 加密存储）
+- 可选账号级 SOCKS5 出站代理
+- EC2 / Lightsail 列表、启停、终止、换 IP
+- 节点绑定 AWS 实例
+- 一键“创建实例并部署节点”
+
+### 8) 运维能力
+
+- 审计日志与操作日志 API
+- 运营日记、订阅统计、运维事件聚合
+- 备份列表、下载、恢复（含完整性校验）
+- Telegram 事件通知
+
+## 系统架构
+
+- 后端：Node.js + Express
+- 数据库：SQLite（`better-sqlite3`，WAL 模式）
+- 会话：`express-session` + `better-sqlite3-session-store`
+- 前端：EJS + Tailwind CSS
+- 节点控制：WebSocket Agent + SSH 后备
+- 云接口：AWS SDK v3（EC2/Lightsail）
+
+## 运行要求
+
+- Node.js >= 20（推荐 22）
+- Linux（推荐 Ubuntu/Debian）
+- 可访问 SQLite 文件目录（`data/`）
+- 反向代理建议使用 Nginx
+- 如需 AWS 能力，需要有效 AWS 凭证
+
+## 快速开始
+
+### 1) 本地启动
 
 ```bash
-git clone <repo> && cd vless-panel
+git clone <your-repo-url> /root/vless-panel
+cd /root/vless-panel
 npm install
-cp .env.example .env  # 编辑配置
-pm2 start ecosystem.config.js
+cp .env.example .env
+# 编辑 .env 必填项
+npm start
 ```
 
-### .env 配置
-
-```env
-# 必填
-SESSION_SECRET=<随机字符串>
-NODELOC_URL=https://www.nodeloc.com
-NODELOC_CLIENT_ID=<OAuth Client ID>
-NODELOC_CLIENT_SECRET=<OAuth Client Secret>
-NODELOC_REDIRECT_URI=https://your-domain/auth/callback
-
-# 可选
-PORT=3000
-```
-
-### Nginx 反代
-
-```nginx
-server {
-    listen 443 ssl http2;
-    server_name your-domain;
-
-    location / {
-        proxy_pass http://127.0.0.1:3000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    # Agent WebSocket
-    location /ws/agent {
-        proxy_pass http://127.0.0.1:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-    }
-}
-```
-
-### AI 运维（可选）
+### 2) PM2 启动
 
 ```bash
-npm i -g openclaw
-cd openclaw-ops && bash setup.sh
-openclaw gateway start
+cd /root/vless-panel
+pm2 start ecosystem.config.js
+pm2 logs vless-panel
 ```
 
-## 📁 项目结构
+### 3) 一键脚本（Debian/Ubuntu）
 
+项目提供 `install.sh`，会安装 Nginx/PM2 并生成基础配置：
+
+```bash
+bash install.sh
 ```
+
+## 环境变量
+
+### 必填（启动校验）
+
+`src/services/env-check.js` 会在启动时强校验以下变量，缺失直接退出：
+
+- `SESSION_SECRET`
+- `NODELOC_URL`
+- `NODELOC_CLIENT_ID`
+- `NODELOC_CLIENT_SECRET`
+- `NODELOC_REDIRECT_URI`
+
+### 常用配置
+
+- `PORT`：服务端口，默认 `3000`
+- `WHITELIST_ENABLED`：白名单模式开关（布尔字符串）
+- `LOG_LEVEL`：pino 日志等级，默认 `info`
+
+### 反向代理信任
+
+- `TRUST_PROXY`：Express 兼容写法（如 `1`）
+- `TRUST_PROXY_CIDRS`：更严格策略，配置后优先于 `TRUST_PROXY`
+
+建议生产优先使用 `TRUST_PROXY_CIDRS`，只信任明确反代来源。
+
+### 订阅风控
+
+- `SUB_CLIENT_FILTER_MODE=off|observe|enforce`
+- `SUB_UA_ALLOWLIST`：UA 白名单（逗号分隔，可含正则）
+- `SUB_TOKEN_WINDOW_MS`
+- `SUB_TOKEN_MAX_REQ`
+- `SUB_TOKEN_BAN_MS`
+- `SUB_BEHAVIOR_WINDOW_MS`
+- `SUB_BEHAVIOR_MAX_IPS`
+- `SUB_BEHAVIOR_MAX_UAS`
+
+### 临时登录通道（高风险，仅应急）
+
+代码支持 `POST /auth/temp-login`，默认关闭。相关变量：
+
+- `TEMP_LOGIN_ENABLED=true`
+- `TEMP_LOGIN_TOKEN=...`
+- `TEMP_LOGIN_ALLOW_PROD=true`（生产需显式允许）
+- `TEMP_LOGIN_ONE_TIME=false|true`
+- `TEMP_LOGIN_EXPIRES_AT=<毫秒时间戳>`
+- `TEMP_LOGIN_IP_ALLOWLIST=ip1,ip2,...`
+
+不需要该能力时请勿开启。
+
+## 部署建议
+
+### 反向代理
+
+Nginx 需正确透传：
+
+- `Host`
+- `X-Real-IP`
+- `X-Forwarded-For`
+- `X-Forwarded-Proto`
+
+并确保 `TRUST_PROXY/TRUST_PROXY_CIDRS` 与你的网络拓扑一致。
+
+### 数据目录
+
+- 数据库：`data/panel.db`
+- 日志：`data/logs/`
+- 备份：`backups/`
+
+建议将 `data/` 与 `backups/` 纳入系统级备份策略。
+
+## 管理后台功能
+
+后台入口 `/admin`，管理员权限访问。主要能力如下。
+
+### 节点
+
+- 部署 VLESS / SS / 双协议
+- 删除节点、更新 IP、更新等级门槛
+- 分组/标签维护
+- Agent 健康检测
+- 手动触发轮换
+
+### 用户
+
+- 分页搜索、排序
+- 封禁/解封
+- 重置订阅 token
+- 设置单用户流量配额
+- 设置用户到期时间
+- 用户详情（流量 + 订阅访问轨迹）
+
+### 流量
+
+- 用户流量排行（按时间范围）
+- 节点维度流量
+- 流量趋势
+
+### 白名单
+
+- 节点白名单（按 nodeloc_id）
+- 注册白名单（按 username）
+
+### 日志与通知
+
+- 审计日志查询/清理
+- Telegram 配置与测试消息
+- 事件通知开关
+
+### AWS
+
+- AWS 账号管理（多账号）
+- SOCKS5 出口验证
+- 实例列表、启停、终止、换 IP
+- 节点与实例绑定
+- 一键创建并部署节点
+
+### Agent
+
+- 查看在线 Agent
+- 下发命令
+- 批量 Agent 自更新
+- 重置 Agent Token
+
+### 备份
+
+- 列表、创建、下载、恢复
+
+### 运维看板
+
+- 订阅统计
+- 运营日记
+- 运维配置、运维事件、诊断记录
+
+## 接口总览
+
+### 健康检查
+
+- `GET /healthz`：返回服务与数据库状态
+
+### 鉴权
+
+- `GET /auth/login`
+- `GET /auth/nodeloc`
+- `GET /auth/callback`
+- `GET /auth/logout`
+- `POST /auth/temp-login`（可选开启）
+
+### 面板侧
+
+- `GET /`：用户面板
+- `GET /sub/:token`
+- `GET /sub6/:token`
+- `GET /sub-qr`
+- `GET /sub6-qr`
+- `GET /online-count`
+- `GET /api/stats`
+- `GET /api/traffic-detail`
+- `GET /api/peach-status`
+
+### 管理 API（`/admin/api`）
+
+代码按模块拆分在 `src/routes/admin/`，详见：
+
+- `adminNodes.js`
+- `adminUsers.js`
+- `adminTraffic.js`
+- `adminWhitelist.js`
+- `adminSettings.js`
+- `adminAws.js`
+- `adminAgents.js`
+- `adminBackup.js`
+
+## 定时任务
+
+时区统一为 `Asia/Shanghai`：
+
+- `02:00` 自动备份数据库
+- `03:00` 自动轮换（端口/UUID + 分级 token 重置）
+- `04:00` 自动冻结不活跃用户 + 到期用户，并按需同步节点配置
+- `04:30` 清理 90 天前审计日志与订阅访问日志
+
+## 数据与备份
+
+### 备份流程
+
+恢复流程为安全链路：
+
+1. 先创建“恢复前备份”
+2. 校验备份完整性（`integrity_check`）
+3. `wal_checkpoint(TRUNCATE)`
+4. 关闭并替换数据库
+5. 重连并再次完整性校验
+
+相关实现：
+
+- `src/services/backup.js`
+- `src/services/backupRestore.js`
+
+## 安全机制
+
+- OAuth `state` 严格校验（防登录 CSRF/会话混淆）
+- CSRF 保护：
+  - JSON 请求校验 Origin/Referer
+  - 表单请求校验 token
+- `helmet` 安全头 + HSTS
+- 登录/订阅/管理 API 限流
+- 订阅风控策略与行为封禁
+- 可信代理边界控制（`TRUST_PROXY_CIDRS`）
+- 会话持久化在 SQLite（非内存会话）
+- 管理端关键输入做转义/校验
+
+## 测试与质量
+
+测试使用 Node 内置测试框架（`node --test`）：
+
+```bash
+npm test
+```
+
+覆盖重点包括：
+
+- OAuth state 校验
+- CSRF 保护链路
+- 管理接口鉴权契约
+- 备份恢复链路（含非 mock 场景）
+- 信任代理与 IP 提取
+- 时间处理与展示字段
+- 订阅风控策略
+- 持久会话跨重启可用性
+- 流量汇总表增量更新逻辑
+
+## 常见运维操作
+
+### 查看服务日志
+
+```bash
+pm2 logs vless-panel
+```
+
+### 重启服务
+
+```bash
+pm2 restart vless-panel
+```
+
+### 执行测试
+
+```bash
+cd /root/vless-panel
+npm test
+```
+
+## 目录结构
+
+```text
 vless-panel/
 ├── src/
-│   ├── app.js                  # Express 入口
+│   ├── app.js
 │   ├── middleware/
-│   │   ├── auth.js             # OAuth 认证
-│   │   ├── csrf.js             # CSRF 防护
-│   │   └── rateLimit.js        # 限流
 │   ├── routes/
-│   │   ├── auth.js             # OAuth 登录/回调
-│   │   ├── panel.js            # 用户面板 + 订阅
-│   │   ├── admin.js            # 管理后台页面
-│   │   └── adminApi.js         # 管理 REST API
+│   │   ├── auth.js
+│   │   ├── panel.js
+│   │   ├── admin.js
+│   │   ├── adminApi.js
+│   │   └── admin/
 │   ├── services/
-│   │   ├── database.js         # SQLite 数据层
-│   │   ├── deploy.js           # SSH 部署 + 配置同步 + Agent 安装
-│   │   ├── aws.js              # AWS EC2/Lightsail 操作
-│   │   ├── agent-ws.js         # Agent WebSocket 服务端
-│   │   ├── health.js           # 健康检测 + 流量处理
-│   │   ├── rotate.js           # UUID/Token 轮换
-│   │   ├── notify.js           # Telegram 通知
-│   │   └── traffic.js          # 流量统计
 │   └── utils/
-│       ├── vless.js            # VLESS 链接 + 订阅生成
-│       ├── crypto.js           # AES-256-GCM 加解密
-│       └── names.js            # 中文节点名生成器
 ├── node-agent/
-│   └── agent.js                # 节点 Agent（单文件，自动部署到节点）
-├── openclaw-ops/               # OpenClaw AI 运维套件
-│   ├── setup.sh                # 一键初始化
-│   ├── HEARTBEAT.md            # 心跳巡检任务
-│   ├── AGENTS.md               # AI 行为规范
-│   ├── SOUL.md                 # AI 人设模板
-│   └── README.md               # 说明文档
-├── views/                      # EJS 模板
-├── data/                       # SQLite 数据库 + 日志
-└── ecosystem.config.js         # PM2 配置
+├── views/
+├── public/
+├── data/
+├── backups/
+├── test/
+└── ecosystem.config.js
 ```
 
-## 📋 管理后台
+## 相关文档
 
-10 个功能 Tab：
+- 对外介绍版：[`README-PUBLIC.md`](./README-PUBLIC.md)
+- API 参考：[`README-API.md`](./README-API.md)
+- 管理后台说明：[`ADMIN-GUIDE.md`](./ADMIN-GUIDE.md)
+- 时间展示规范：[`TIME-DISPLAY-CONVENTION.md`](./TIME-DISPLAY-CONVENTION.md)
+- 变更记录：[`CHANGELOG.md`](./CHANGELOG.md)
 
-| Tab | 功能 |
-|---|---|
-| 🌐 节点 | 部署、删除、编辑、等级设置、配置同步 |
-| 👥 用户 | 封禁、重置订阅、流量限额、搜索 |
-| 📊 流量 | 按用户/节点的流量统计，支持日/周/月/自定义 |
-| 🔒 白名单 | 注册白名单 + 节点白名单 |
-| 📋 日志 | 审计日志，支持系统/操作/全部筛选 |
-| 📈 订阅统计 | 拉取次数、IP 分布、UA、风险等级 |
-| 🔔 通知 | TG Bot 配置、7 种通知事件开关 |
-| ☁️ AWS | 多账号管理、实例仪表盘、一键创建部署 |
-| 🧠 AI运维 | 运维配置（自动换IP/修复/扩缩容/守护） |
-| 📔 运营日记 | AI 运维操作的时间线记录 |
-| 📖 使用说明 | 全功能文档 + API 参考 + 搜索 |
-
-## 📄 License
+## License
 
 MIT

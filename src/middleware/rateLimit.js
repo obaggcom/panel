@@ -15,7 +15,6 @@ const authLimiter = rateLimit({
 const subLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 5,
-  keyGenerator: (req) => req.headers['cf-connecting-ip'] || req.headers['x-real-ip'] || req.ip,
   standardHeaders: true,
   legacyHeaders: false
 });

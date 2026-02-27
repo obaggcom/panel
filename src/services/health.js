@@ -1,6 +1,7 @@
 const net = require('net');
 const db = require('./database');
 const { notify, send: notifySend } = require('./notify');
+const { nowUtcIso, toSqlUtc, dateKeyInTimeZone, formatDateTimeInTimeZone } = require('../utils/time');
 
 // 模块级缓存（替代 global 变量）
 const _trafficNotifiedCache = new Set();
@@ -29,7 +30,7 @@ function saveTrafficRecords(nodeId, records) {
   if (!records || records.length === 0) return 0;
   const userTraffic = {};
 
-  // 捐赠节点脱敏 tag → userId 映射缓存
+  // 兼容旧格式 tag → userId 映射缓存
   let _tagCache = null;
   function resolveTag(tag, nodeId) {
     if (!_tagCache) {
@@ -45,7 +46,7 @@ function saveTrafficRecords(nodeId, records) {
 
   for (const r of records) {
     let userId = r.userId;
-    // 捐赠节点脱敏格式：通过 tag 反查 userId
+    // 兼容旧格式：通过 tag 反查 userId
     if (!userId && r.tag) {
       userId = resolveTag(r.tag, nodeId);
       if (!userId) continue; // 无法反查，跳过
@@ -68,7 +69,11 @@ function saveTrafficRecords(nodeId, records) {
 // 流量超标检测（20GB/天）
 function checkTrafficExceed() {
   try {
-    const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10); // Asia/Shanghai
+    const today = dateKeyInTimeZone(new Date(), 'Asia/Shanghai');
+    // 清理非今日缓存，避免 Set 长期增长
+    for (const key of _trafficNotifiedCache) {
+      if (!String(key).endsWith(`_${today}`)) _trafficNotifiedCache.delete(key);
+    }
     const todayTraffic = db.getDb().prepare(`
       SELECT t.user_id, u.username, SUM(t.uplink) as total_up, SUM(t.downlink) as total_down
       FROM traffic_daily t JOIN users u ON t.user_id = u.id
@@ -103,7 +108,7 @@ function updateOnlineCache(nodeId, trafficRecords) {
 
   const nodeUserIds = new Set();
   for (const r of trafficRecords) {
-    // 捐赠节点可能只有 tag 没有 userId，通过 uuid 反查
+    // 兼容旧格式：可能只有 tag 没有 userId，通过 uuid 反查
     let uid = r.userId;
     if (!uid && r.tag) {
       try {
@@ -137,35 +142,10 @@ function updateOnlineCache(nodeId, trafficRecords) {
  * 供 agent-ws.js 调用，集中所有节点状态更新、流量保存、通知等逻辑
  */
 function updateFromAgentReport(nodeId, reportData) {
-  const { xrayAlive, cnReachable, ipv6Reachable, trafficRecords, configHash } = reportData;
-  const now = new Date(Date.now() + 8 * 3600000).toISOString();
+  const { xrayAlive, cnReachable, ipv6Reachable, trafficRecords } = reportData;
+  const now = nowUtcIso();
   const node = db.getNodeById(nodeId);
   if (!node) return;
-
-  // ─── 捐赠节点配置防篡改校验 ───
-  if (node.is_donation && configHash) {
-    const expectedHash = db.getSetting(`donate_cfg_hash_${nodeId}`);
-    if (expectedHash && configHash !== expectedHash) {
-      console.error(`[🚨 安全] 捐赠节点 ${node.name} (#${nodeId}) 配置被篡改！期望: ${expectedHash.slice(0, 12)}... 实际: ${configHash.slice(0, 12)}...`);
-      // 立即下线节点
-      db.updateNode(nodeId, {
-        is_active: 0,
-        remark: '🚨 配置被篡改，已自动下线',
-        last_check: now.replace('T', ' ').substring(0, 19),
-      });
-      db.addAuditLog(null, 'donate_config_tamper', `🚨 捐赠节点 ${node.name} 配置被篡改，已自动下线 | 期望哈希: ${expectedHash.slice(0, 16)} 实际: ${configHash.slice(0, 16)}`, 'system');
-      // TG 通知大哥
-      notify.ops(`🚨 <b>捐赠节点配置被篡改！</b>\n节点: ${node.name} (#${nodeId})\n动作: 已自动下线\n期望哈希: <code>${expectedHash.slice(0, 16)}</code>\n实际哈希: <code>${configHash.slice(0, 16)}</code>`);
-      // 断开 Agent 连接
-      try {
-        const agentWs = require('./agent-ws');
-        const agents = agentWs.getConnectedAgents();
-        const agent = agents.find(a => a.nodeId === nodeId);
-        // 不断开连接，但标记已下线，等人工处理
-      } catch {}
-      return; // 不再处理后续逻辑
-    }
-  }
 
   // 判定节点状态
   let status, remark;
@@ -268,7 +248,7 @@ function updateFromAgentReport(nodeId, reportData) {
   db.updateNode(nodeId, {
     is_active: status,
     remark,
-    last_check: now.replace('T', ' ').substring(0, 19),
+    last_check: toSqlUtc(now),
   });
 
   // 保存 agent 上报时间
@@ -286,7 +266,7 @@ function updateFromAgentReport(nodeId, reportData) {
       db.addAuditLog(null, 'node_auto_remove_manual', detail, 'system');
       db.deleteNode(nodeId);
       // notify already imported at top
-      notifySend(`🗑️ <b>手动节点已自动移除</b>\n节点: ${node.name}\n地址: ${node.host}:${node.port}\n原因: 连续 ${nextFailCount} 次检测失败 (${remark})\n时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`).catch(() => {});
+      notifySend(`🗑️ <b>手动节点已自动移除</b>\n节点: ${node.name}\n地址: ${node.host}:${node.port}\n原因: 连续 ${nextFailCount} 次检测失败 (${remark})\n时间: ${formatDateTimeInTimeZone(new Date(), 'Asia/Shanghai', true)}`).catch(() => {});
       return;
     }
   }

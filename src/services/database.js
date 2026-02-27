@@ -31,6 +31,20 @@ function getDb() {
   return db;
 }
 
+function closeDb() {
+  if (!db) return;
+  try {
+    db.close();
+  } finally {
+    db = null;
+  }
+}
+
+function reopenDb() {
+  closeDb();
+  return getDb();
+}
+
 function initRepos() {
   const deps = { getDb };
   settingsRepo.init(deps);
@@ -71,7 +85,7 @@ function initTables() {
       is_frozen INTEGER DEFAULT 0,
       traffic_limit INTEGER DEFAULT 0,
       max_devices INTEGER DEFAULT 3,
-      created_at TEXT DEFAULT (datetime('now', 'localtime')),
+      created_at TEXT DEFAULT (datetime('now')),
       last_login TEXT
     );
 
@@ -79,7 +93,7 @@ function initTables() {
     CREATE TABLE IF NOT EXISTS whitelist (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT UNIQUE NOT NULL,
-      added_at TEXT DEFAULT (datetime('now', 'localtime'))
+      added_at TEXT DEFAULT (datetime('now'))
     );
 
     -- 节点表
@@ -107,8 +121,7 @@ function initTables() {
       remark TEXT,
       last_rotated TEXT,
       last_check TEXT,
-      is_donation INTEGER DEFAULT 0,
-      created_at TEXT DEFAULT (datetime('now', 'localtime'))
+      created_at TEXT DEFAULT (datetime('now'))
     );
 
     -- 审计日志
@@ -118,7 +131,7 @@ function initTables() {
       action TEXT NOT NULL,
       detail TEXT,
       ip TEXT,
-      created_at TEXT DEFAULT (datetime('now', 'localtime')),
+      created_at TEXT DEFAULT (datetime('now')),
       FOREIGN KEY (user_id) REFERENCES users(id)
     );
 
@@ -146,7 +159,7 @@ function initTables() {
       node_id INTEGER NOT NULL,
       uplink INTEGER DEFAULT 0,
       downlink INTEGER DEFAULT 0,
-      recorded_at TEXT DEFAULT (datetime('now', 'localtime')),
+      recorded_at TEXT DEFAULT (datetime('now')),
       FOREIGN KEY (user_id) REFERENCES users(id),
       FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE
     );
@@ -162,13 +175,22 @@ function initTables() {
       UNIQUE(user_id, node_id, date),
       FOREIGN KEY (user_id) REFERENCES users(id)
     );
+
+    -- 用户累计流量汇总表（总量，避免用户列表实时聚合）
+    CREATE TABLE IF NOT EXISTS traffic_user_total (
+      user_id INTEGER PRIMARY KEY,
+      total_up INTEGER DEFAULT 0,
+      total_down INTEGER DEFAULT 0,
+      updated_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
     -- 订阅拉取 IP 记录
     CREATE TABLE IF NOT EXISTS sub_access_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL,
       ip TEXT NOT NULL,
       ua TEXT DEFAULT '',
-      created_at TEXT DEFAULT (datetime('now', 'localtime')),
+      created_at TEXT DEFAULT (datetime('now')),
       FOREIGN KEY (user_id) REFERENCES users(id)
     );
   `);
@@ -183,7 +205,7 @@ function initTables() {
       ai_analysis TEXT,
       fix_commands TEXT,
       fix_result TEXT,
-      created_at TEXT DEFAULT (datetime('now', 'localtime')),
+      created_at TEXT DEFAULT (datetime('now')),
       resolved_at TEXT,
       FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE
     )
@@ -193,11 +215,15 @@ function initTables() {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_traffic_daily_user_date ON traffic_daily(user_id, date);
     CREATE INDEX IF NOT EXISTS idx_traffic_daily_node ON traffic_daily(node_id);
+    CREATE INDEX IF NOT EXISTS idx_traffic_user_total_traffic ON traffic_user_total(total_up, total_down);
     CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
     CREATE INDEX IF NOT EXISTS idx_sub_access_log_user_time ON sub_access_log(user_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_sub_access_log_time_user_ip ON sub_access_log(created_at, user_id, ip);
     CREATE INDEX IF NOT EXISTS idx_user_node_uuid_node ON user_node_uuid(node_id);
     CREATE INDEX IF NOT EXISTS idx_user_node_uuid_user ON user_node_uuid(user_id);
     CREATE INDEX IF NOT EXISTS idx_traffic_user_node ON traffic(user_id, node_id);
+    CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+    CREATE INDEX IF NOT EXISTS idx_users_last_login ON users(last_login);
   `);
 
   // 初始化默认配置
@@ -216,7 +242,7 @@ function initTables() {
     CREATE TABLE IF NOT EXISTS register_whitelist (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT UNIQUE NOT NULL,
-      added_at TEXT DEFAULT (datetime('now', 'localtime'))
+      added_at TEXT DEFAULT (datetime('now'))
     )
   `);
 
@@ -282,7 +308,7 @@ function initTables() {
       id INTEGER PRIMARY KEY,
       telegram_id TEXT UNIQUE NOT NULL,
       username TEXT,
-      added_at TEXT DEFAULT (datetime('now', 'localtime'))
+      added_at TEXT DEFAULT (datetime('now'))
     )
   `);
 
@@ -292,9 +318,6 @@ function initTables() {
   }
   if (!userCols.includes('traffic_limit')) {
     db.exec("ALTER TABLE users ADD COLUMN traffic_limit INTEGER DEFAULT 0");
-  }
-  if (!userCols.includes('is_donor')) {
-    db.exec("ALTER TABLE users ADD COLUMN is_donor INTEGER DEFAULT 0");
   }
   if (!userCols.includes('last_token_reset')) {
     db.exec("ALTER TABLE users ADD COLUMN last_token_reset TEXT DEFAULT '2000-01-01'");
@@ -313,8 +336,8 @@ function initTables() {
       socks5_user TEXT,
       socks5_pass TEXT,
       enabled INTEGER DEFAULT 1,
-      created_at TEXT DEFAULT (datetime('now', 'localtime')),
-      updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
     )
   `);
 
@@ -325,37 +348,13 @@ function initTables() {
       content TEXT NOT NULL,
       mood TEXT DEFAULT '🐱',
       category TEXT DEFAULT 'ops',
-      created_at TEXT DEFAULT (datetime('now', 'localtime'))
+      created_at TEXT DEFAULT (datetime('now'))
     )
   `);
 
-  // 捐赠节点表
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS node_donations (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      token TEXT UNIQUE NOT NULL,
-      status TEXT DEFAULT 'pending',
-      node_id INTEGER,
-      server_ip TEXT,
-      region TEXT,
-      remark TEXT,
-      created_at TEXT DEFAULT (datetime('now', 'localtime')),
-      approved_at TEXT,
-      FOREIGN KEY (user_id) REFERENCES users(id),
-      FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE SET NULL
-    )
-  `);
-
-  // 捐赠令牌表（生成时记录，Agent连上来才转入 node_donations）
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS donate_tokens (
-      user_id INTEGER NOT NULL,
-      token TEXT UNIQUE NOT NULL,
-      created_at TEXT DEFAULT (datetime('now', 'localtime')),
-      PRIMARY KEY (token)
-    )
-  `);
+  // 清理已废弃的捐赠功能表
+  db.exec('DROP TABLE IF EXISTS node_donations');
+  db.exec('DROP TABLE IF EXISTS donate_tokens');
 
   // Sprint 7: 清理废弃 AI 表
   db.exec("DROP TABLE IF EXISTS ai_providers");
@@ -387,7 +386,7 @@ function initTables() {
     db.exec(`CREATE TABLE whitelist (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       nodeloc_id INTEGER UNIQUE NOT NULL,
-      added_at TEXT DEFAULT (datetime('now', 'localtime'))
+      added_at TEXT DEFAULT (datetime('now'))
     )`);
   }
 
@@ -433,20 +432,45 @@ function initTables() {
   if (!nodeCols2.includes('ip_version')) {
     try { db.exec("ALTER TABLE nodes ADD COLUMN ip_version INTEGER DEFAULT 4"); } catch(_){}
   }
-  if (!nodeCols2.includes('is_donation')) {
-    try { db.exec("ALTER TABLE nodes ADD COLUMN is_donation INTEGER DEFAULT 0"); } catch(_){}
+  if (nodeCols2.includes('is_donation')) {
+    try { db.exec("UPDATE nodes SET is_donation = 0 WHERE is_donation IS NOT NULL AND is_donation != 0"); } catch(_){}
   }
-
   // Sprint 6 迁移：用户到期时间
   const userCols2 = db.prepare("PRAGMA table_info(users)").all().map(c => c.name);
   if (!userCols2.includes('expires_at')) {
     try { db.exec("ALTER TABLE users ADD COLUMN expires_at TEXT"); } catch(_){}
   }
+  try { db.exec("CREATE INDEX IF NOT EXISTS idx_users_expires_at ON users(expires_at)"); } catch(_){}
+  if (userCols2.includes('is_donor')) {
+    try { db.exec("UPDATE users SET is_donor = 0 WHERE is_donor IS NOT NULL AND is_donor != 0"); } catch(_){}
+  }
+  try {
+    db.exec("DELETE FROM settings WHERE key LIKE 'donate_cfg_hash_%'");
+  } catch(_) {}
+
+  // 用户累计流量汇总表初始化/回填
+  try {
+    const totalCount = db.prepare('SELECT COUNT(*) as c FROM traffic_user_total').get().c;
+    if (totalCount === 0) {
+      db.exec(`
+        INSERT INTO traffic_user_total (user_id, total_up, total_down, updated_at)
+        SELECT user_id,
+               COALESCE(SUM(uplink), 0) as total_up,
+               COALESCE(SUM(downlink), 0) as total_down,
+               datetime('now') as updated_at
+        FROM traffic_daily
+        GROUP BY user_id
+      `);
+    }
+    db.exec('DELETE FROM traffic_user_total WHERE user_id NOT IN (SELECT id FROM users)');
+  } catch (_) {}
 }
 
 // 导出所有函数（向后兼容）
 module.exports = {
   getDb,
+  closeDb,
+  reopenDb,
   // 用户
   findOrCreateUser: (...a) => userRepo.findOrCreateUser(...a),
   getUserBySubToken: (...a) => userRepo.getUserBySubToken(...a),

@@ -23,7 +23,7 @@ async function loadLogs(page) {
 
     const tdTime = document.createElement('td');
     tdTime.className = 'py-2 px-4 text-xs text-gray-500';
-    tdTime.textContent = l.created_at;
+    tdTime.textContent = l.created_at_display || l.created_at || '-';
 
     const tdUser = document.createElement('td');
     tdUser.className = 'py-2 px-4 text-xs';

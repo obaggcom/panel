@@ -14,6 +14,8 @@ const path = require('path');
 const logger = require('./services/logger');
 const fs = require('fs');
 const { performBackup, BACKUP_DIR } = require('./services/backup');
+const { getClientIp } = require('./utils/clientIp');
+const { resolveTrustProxyConfig } = require('./utils/trustProxy');
 
 const { setupAuth } = require('./middleware/auth');
 const authRoutes = require('./routes/auth');
@@ -78,8 +80,16 @@ app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
-// 信任 nginx 反代
-app.set('trust proxy', 1);
+// 反代信任边界：优先使用 TRUST_PROXY_CIDRS，仅在可信来源下接受 X-Forwarded-For
+const trustProxyConfig = resolveTrustProxyConfig(process.env);
+app.set('trust proxy', trustProxyConfig.value);
+if (trustProxyConfig.mode === 'cidr') {
+  logger.info({ cidrs: trustProxyConfig.cidrs }, 'trust proxy 已启用 CIDR 白名单');
+}
+app.use((req, res, next) => {
+  req.clientIp = getClientIp(req);
+  next();
+});
 
 // Session（持久化到 SQLite）
 app.use(session({
@@ -123,9 +133,7 @@ app.get('/api/agent/download', (req, res) => {
     const d = getDb();
     const globalToken = d.prepare("SELECT value FROM settings WHERE key='agent_token'").get()?.value;
     const nodeToken = d.prepare('SELECT 1 FROM nodes WHERE agent_token = ? LIMIT 1').get(token);
-    const donateToken = d.prepare('SELECT 1 FROM donate_tokens WHERE token = ? LIMIT 1').get(token);
-
-    if (token !== globalToken && !nodeToken && !donateToken) {
+    if (token !== globalToken && !nodeToken) {
       return res.status(403).send('Forbidden');
     }
 
@@ -174,58 +182,18 @@ cron.schedule('0 3 * * *', async () => {
   }
 }, { timezone: 'Asia/Shanghai' });
 
-function checkDonorStatus() {
-  const db = dbModule;
-  const d = db.getDb();
-  const donorUsers = d.prepare(`
-    SELECT DISTINCT user_id FROM node_donations WHERE status = 'online'
-    UNION
-    SELECT id as user_id FROM users WHERE is_donor = 1
-  `).all();
-
-  for (const { user_id } of donorUsers) {
-    const activeCount = d.prepare(`
-      SELECT COUNT(*) as cnt FROM node_donations nd
-      JOIN nodes n ON nd.node_id = n.id
-      WHERE nd.user_id = ? AND nd.status = 'online' AND n.is_active = 1
-    `).get(user_id)?.cnt || 0;
-
-    if (activeCount > 0) {
-      d.prepare('UPDATE users SET is_donor = 1 WHERE id = ? AND is_donor = 0').run(user_id);
-      continue;
-    }
-
-    const lastOfflineAt = d.prepare(`
-      SELECT MAX(n.last_check) as last_check
-      FROM node_donations nd
-      JOIN nodes n ON nd.node_id = n.id
-      WHERE nd.user_id = ? AND nd.status = 'online' AND n.is_active = 0
-    `).get(user_id)?.last_check;
-
-    const offlineMinutes = lastOfflineAt ? (Date.now() - new Date(lastOfflineAt).getTime()) / 60000 : 99999;
-    if (offlineMinutes < 30) continue;
-
-    const changed = d.prepare('UPDATE users SET is_donor = 0 WHERE id = ? AND is_donor = 1').run(user_id).changes;
-    if (changed > 0) {
-      const u = db.getUserById(user_id);
-      db.addAuditLog(null, 'donor_revoke', `回收捐赠者标识: ${u?.username || user_id} (离线${Math.floor(offlineMinutes)}分钟)`, 'system');
-    }
-  }
-}
-
 // 每天凌晨 4 点清理过期数据 + 自动冻结不活跃用户
 cron.schedule('0 4 * * *', async () => {
   try {
     const db = dbModule;
-    const d = db.getDb();
+    let needsSync = false;
 
     // 自动冻结 15 天未登录的用户
     const frozen = db.autoFreezeInactiveUsers(15);
     if (frozen.length > 0) {
       logger.info({ count: frozen.length, users: frozen.map(u => u.username) }, '自动冻结不活跃用户');
       db.addAuditLog(null, 'auto_freeze', `自动冻结 ${frozen.length} 个用户: ${frozen.map(u => u.username).join(', ')}`, 'system');
-      // 同步节点配置，移除冻结用户的 UUID
-      await deployService.syncAllNodesConfig(db);
+      needsSync = true;
     }
 
     // Sprint 6: 自动冻结到期用户
@@ -233,49 +201,14 @@ cron.schedule('0 4 * * *', async () => {
     if (expired.length > 0) {
       logger.info({ count: expired.length, users: expired.map(u => u.username) }, '自动冻结到期用户');
       db.addAuditLog(null, 'auto_freeze_expired', `自动冻结 ${expired.length} 个到期用户: ${expired.map(u => u.username).join(', ')}`, 'system');
+      needsSync = true;
+    }
+
+    if (needsSync) {
+      // 合并执行一次全量同步，避免同一轮 cron 重复推送
       await deployService.syncAllNodesConfig(db);
     }
-    // 自动清理离线捐赠节点：离线超 24 小时 → 删除节点 + 回收捐赠者标识
-    try {
-      // 找出所有已审核但节点离线的捐赠记录
-      const offlineDonations = d.prepare(`
-        SELECT nd.id, nd.user_id, nd.node_id, n.name as node_name, n.last_check
-        FROM node_donations nd
-        JOIN nodes n ON nd.node_id = n.id
-        WHERE nd.status = 'online' AND n.is_active = 0
-      `).all();
-
-      for (const dn of offlineDonations) {
-        const hoursSince = dn.last_check ? (Date.now() - new Date(dn.last_check).getTime()) / 3600000 : 999;
-        if (hoursSince < 24) continue;
-
-        const u = db.getUserById(dn.user_id);
-        const username = u?.username || `用户${dn.user_id}`;
-
-        // 删除节点记录
-        d.prepare('DELETE FROM user_node_uuid WHERE node_id = ?').run(dn.node_id);
-        d.prepare('DELETE FROM nodes WHERE id = ?').run(dn.node_id);
-        // 更新捐赠记录
-        d.prepare("UPDATE node_donations SET status = 'offline', node_id = NULL WHERE id = ?").run(dn.id);
-
-        logger.info(`[捐赠清理] 删除离线捐赠节点: ${dn.node_name} (${username}), 离线 ${Math.floor(hoursSince)}h`);
-        db.addAuditLog(null, 'donate_cleanup', `自动删除离线捐赠节点: ${dn.node_name}, 捐赠者: ${username}, 离线${Math.floor(hoursSince)}h`, 'system');
-      }
-
-      // 检查捐赠者是否还有在线节点；离线超过 30 分钟再回收标识与权益
-      checkDonorStatus();
-    } catch (e) { logger.error({ err: e }, '捐赠清理失败'); }
-
   } catch (err) { logger.error({ err }, '清理/冻结失败'); }
-}, { timezone: 'Asia/Shanghai' });
-
-// 每 10 分钟检查一次：捐赠节点离线超过 30 分钟回收权益，恢复上线自动恢复权益
-cron.schedule('*/10 * * * *', () => {
-  try {
-    checkDonorStatus();
-  } catch (err) {
-    logger.error({ err }, '捐赠权益巡检失败');
-  }
 }, { timezone: 'Asia/Shanghai' });
 
 // 启动
@@ -298,8 +231,11 @@ const agentWs = require('./services/agent-ws');
 agentWs.init(server);
 
 // O4: 每天凌晨 2 点自动备份数据库
-cron.schedule('0 2 * * *', () => {
-  performBackup(getDb());
+cron.schedule('0 2 * * *', async () => {
+  const result = await performBackup(getDb());
+  if (!result.ok) {
+    logger.error({ error: result.error }, '定时备份失败');
+  }
 }, { timezone: 'Asia/Shanghai' });
 
 // O7: 每天凌晨 4:30 清理过期审计日志和订阅访问日志（保留90天）

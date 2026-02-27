@@ -3,16 +3,7 @@ const db = require('../../services/database');
 const deployService = require('../../services/deploy');
 const agentWs = require('../../services/agent-ws');
 const { emitSyncAll, emitSyncNode } = require('../../services/configEvents');
-
-function parseIntId(raw) {
-  const n = Number(raw);
-  return Number.isInteger(n) && n > 0 ? n : null;
-}
-
-const HOST_RE = /^[a-zA-Z0-9._-]{1,253}$/;
-function isValidHost(host) {
-  return typeof host === 'string' && HOST_RE.test(host.trim());
-}
+const { parseIntId, isValidHost } = require('../../utils/validators');
 
 const router = express.Router();
 
@@ -35,13 +26,13 @@ router.post('/nodes/deploy-smart', (req, res) => {
   };
 
   if (vless && ss) {
-    db.addAuditLog(req.user.id, 'node_deploy_dual_start', `开始双协议部署: ${host}`, req.ip);
+    db.addAuditLog(req.user.id, 'node_deploy_dual_start', `开始双协议部署: ${host}`, req.clientIp || req.ip);
     deployService.deployDualNode(sshInfo, db).catch(err => console.error('[双协议部署异常]', err));
   } else if (vless) {
-    db.addAuditLog(req.user.id, 'node_deploy_start', `开始VLESS部署: ${host}`, req.ip);
+    db.addAuditLog(req.user.id, 'node_deploy_start', `开始VLESS部署: ${host}`, req.clientIp || req.ip);
     deployService.deployNode(sshInfo, db).catch(err => console.error('[部署异常]', err));
   } else {
-    db.addAuditLog(req.user.id, 'node_deploy_ss_start', `开始SS部署: ${host}`, req.ip);
+    db.addAuditLog(req.user.id, 'node_deploy_ss_start', `开始SS部署: ${host}`, req.clientIp || req.ip);
     deployService.deploySsNode(sshInfo, db).catch(err => console.error('[SS部署异常]', err));
   }
 
@@ -52,7 +43,7 @@ router.post('/nodes/deploy-dual', (req, res) => {
   const { host, ssh_port, ssh_user, ssh_password, ss_method, socks5_host, socks5_port, socks5_user, socks5_pass } = req.body;
   if (!host || !ssh_password) return res.redirect('/admin#nodes');
 
-  db.addAuditLog(req.user.id, 'node_deploy_dual_start', `开始双协议部署: ${host}`, req.ip);
+  db.addAuditLog(req.user.id, 'node_deploy_dual_start', `开始双协议部署: ${host}`, req.clientIp || req.ip);
 
   deployService.deployDualNode({
     host, ssh_port: parseInt(ssh_port) || 22, ssh_user: ssh_user || 'root', ssh_password,
@@ -71,11 +62,11 @@ router.post('/nodes/deploy-ss', (req, res) => {
 
   const existing = db.getAllNodes().find(n => n.ssh_host === host.trim() || n.host === host.trim());
   if (existing) {
-    db.addAuditLog(req.user.id, 'node_deploy_dup', `重复 IP: ${host} (已有节点: ${existing.name})`, req.ip);
+    db.addAuditLog(req.user.id, 'node_deploy_dup', `重复 IP: ${host} (已有节点: ${existing.name})`, req.clientIp || req.ip);
     return res.redirect('/admin?msg=dup#nodes');
   }
 
-  db.addAuditLog(req.user.id, 'node_deploy_ss_start', `开始SS部署: ${host}`, req.ip);
+  db.addAuditLog(req.user.id, 'node_deploy_ss_start', `开始SS部署: ${host}`, req.clientIp || req.ip);
 
   deployService.deploySsNode({
     host, ssh_port: parseInt(ssh_port) || 22, ssh_user: ssh_user || 'root', ssh_password,
@@ -93,11 +84,11 @@ router.post('/nodes/deploy', (req, res) => {
 
   const existing = db.getAllNodes().find(n => n.host === host.trim());
   if (existing) {
-    db.addAuditLog(req.user.id, 'node_deploy_dup', `重复 IP: ${host} (已有节点: ${existing.name})`, req.ip);
+    db.addAuditLog(req.user.id, 'node_deploy_dup', `重复 IP: ${host} (已有节点: ${existing.name})`, req.clientIp || req.ip);
     return res.redirect('/admin?msg=dup#nodes');
   }
 
-  db.addAuditLog(req.user.id, 'node_deploy_start', `开始部署: ${host}${socks5_host ? ' (socks5→' + socks5_host + ')' : ''}`, req.ip);
+  db.addAuditLog(req.user.id, 'node_deploy_start', `开始部署: ${host}${socks5_host ? ' (socks5→' + socks5_host + ')' : ''}`, req.clientIp || req.ip);
 
   deployService.deployNode({
     host, ssh_port: parseInt(ssh_port) || 22, ssh_user: ssh_user || 'root', ssh_password,
@@ -138,7 +129,7 @@ router.post('/nodes/:id/delete', (req, res) => {
       console.error(`[删除节点] 停止远端服务失败: ${err.message}`);
     }
     db.deleteNode(node.id);
-    db.addAuditLog(req.user.id, 'node_delete', `删除节点: ${node.name}`, req.ip);
+    db.addAuditLog(req.user.id, 'node_delete', `删除节点: ${node.name}`, req.clientIp || req.ip);
   })();
 
   res.redirect('/admin#nodes');
@@ -153,7 +144,7 @@ router.post('/nodes/:id/update-host', (req, res) => {
   if (node && host?.trim()) {
     const oldHost = node.host;
     db.updateNode(node.id, { host: host.trim(), ssh_host: host.trim() });
-    db.addAuditLog(req.user.id, 'node_update_ip', `${node.name} IP变更: ${oldHost} → ${host.trim()}`, req.ip);
+    db.addAuditLog(req.user.id, 'node_update_ip', `${node.name} IP变更: ${oldHost} → ${host.trim()}`, req.clientIp || req.ip);
   }
   res.redirect('/admin#nodes');
 });
@@ -165,7 +156,7 @@ router.post('/nodes/:id/update-level', async (req, res) => {
   const level = parseInt(req.body.level) || 0;
   if (node) {
     db.updateNode(node.id, { min_level: Math.max(0, Math.min(4, level)) });
-    db.addAuditLog(req.user.id, 'node_update_level', `${node.name} 等级: Lv.${level}`, req.ip);
+    db.addAuditLog(req.user.id, 'node_update_level', `${node.name} 等级: Lv.${level}`, req.clientIp || req.ip);
     emitSyncNode(node);
   }
   res.json({ ok: true });
@@ -191,7 +182,7 @@ router.post('/health-check', async (req, res) => {
       }
     }
 
-    db.addAuditLog(req.user.id, 'health_check', `Agent 健康检测: ${agents.length}/${nodes.length} 在线`, req.ip);
+    db.addAuditLog(req.user.id, 'health_check', `Agent 健康检测: ${agents.length}/${nodes.length} 在线`, req.clientIp || req.ip);
     res.json({ ok: true, results });
   } catch (err) {
     console.error('[健康检测]', err);
@@ -201,7 +192,7 @@ router.post('/health-check', async (req, res) => {
 
 router.post('/rotate', (req, res) => {
   const rotateService = require('../../services/rotate');
-  db.addAuditLog(req.user.id, 'manual_rotate', '手动轮换（后台执行中）', req.ip);
+  db.addAuditLog(req.user.id, 'manual_rotate', '手动轮换（后台执行中）', req.clientIp || req.ip);
   res.redirect('/admin#nodes');
   rotateService.rotateManual().catch(err => console.error('[手动轮换] 失败:', err));
 });
@@ -215,7 +206,7 @@ router.post('/nodes/:id/restart-xray', async (req, res) => {
     return res.json({ success: false, error: 'Agent 不在线' });
   }
   const result = await agentWs.sendCommand(node.id, { type: 'restart_xray' });
-  db.addAuditLog(req.user.id, 'restart_xray', `重启 Xray: ${node.name}`, req.ip);
+  db.addAuditLog(req.user.id, 'restart_xray', `重启 Xray: ${node.name}`, req.clientIp || req.ip);
   res.json(result);
 });
 
@@ -230,7 +221,7 @@ router.post('/nodes/:id/update-group', (req, res) => {
     group_name: (group_name || '').trim(),
     tags: (tags || '').trim()
   });
-  db.addAuditLog(req.user.id, 'node_update_group', `${node.name} 分组: ${group_name || '无'}, 标签: ${tags || '无'}`, req.ip);
+  db.addAuditLog(req.user.id, 'node_update_group', `${node.name} 分组: ${group_name || '无'}, 标签: ${tags || '无'}`, req.clientIp || req.ip);
   res.json({ ok: true });
 });
 
@@ -247,7 +238,7 @@ router.post('/nodes/:id/update-ss', (req, res) => {
   if (ss_method) updates.ss_method = ss_method;
   if (ss_password !== undefined) updates.ss_password = ss_password;
   db.updateNode(id, updates);
-  db.addAuditLog(req.user.id, 'node_update_ss', `${node.name} SS配置: protocol=${protocol}, ipv=${ip_version}`, req.ip);
+  db.addAuditLog(req.user.id, 'node_update_ss', `${node.name} SS配置: protocol=${protocol}, ipv=${ip_version}`, req.clientIp || req.ip);
   res.json({ ok: true });
 });
 
@@ -286,7 +277,7 @@ router.post('/nodes/manual', (req, res) => {
   // ip_version 也通过 updateNode 写入
   db.updateNode(nodeId, { ip_version: ipv });
 
-  db.addAuditLog(req.user.id, 'node_add_manual', `手动添加节点: ${name} (${proto}/IPv${ipv})`, req.ip);
+  db.addAuditLog(req.user.id, 'node_add_manual', `手动添加节点: ${name} (${proto}/IPv${ipv})`, req.clientIp || req.ip);
   res.json({ ok: true, id: nodeId });
 });
 

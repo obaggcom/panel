@@ -9,7 +9,8 @@ router.get('/traffic', (req, res) => {
   const limit = 20;
   const offset = (page - 1) * limit;
   const data = db.getUsersTrafficByRange(range, limit, offset);
-  res.json({ ...data, page });
+  const pages = Math.max(1, Math.ceil((data.total || 0) / limit));
+  res.json({ ...data, page, limit, pages });
 });
 
 router.get('/traffic/nodes', (req, res) => {

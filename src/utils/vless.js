@@ -1,3 +1,5 @@
+const { formatBytes } = require('./formatBytes');
+
 // 生成 vless 链接
 function buildVlessLink(node, uuid) {
   const params = new URLSearchParams({ type: node.network || 'tcp' });
@@ -17,14 +19,6 @@ function buildVlessLink(node, uuid) {
 // 生成信息假节点 vless 链接
 function buildInfoLink(text) {
   return `vless://00000000-0000-0000-0000-000000000000@127.0.0.1:0?type=tcp&security=none#${encodeURIComponent(text)}`;
-}
-
-// 格式化字节数
-function formatBytes(bytes) {
-  if (bytes <= 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(1024));
-  return (bytes / Math.pow(1024, i)).toFixed(2) + ' ' + units[i];
 }
 
 // v2ray 订阅（base64 编码的链接列表）

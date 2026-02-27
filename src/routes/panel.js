@@ -8,6 +8,9 @@ const QRCode = require('qrcode');
 const { notify } = require('../services/notify');
 const { getOnlineCache } = require('../services/health');
 const { escapeHtml } = require('../utils/escapeHtml');
+const { getClientIp } = require('../utils/clientIp');
+const { dateKeyInTimeZone, toSqlUtc, formatDateTimeInTimeZone } = require('../utils/time');
+const { createSubGuard } = require('../services/subGuard');
 
 // 模块级缓存（替代 global 变量）
 const _abuseCache = new Map();
@@ -19,26 +22,95 @@ const router = express.Router();
 // ========== 订阅接口内存缓存 ==========
 const _subCache = new Map(); // token -> { data, headers, ts }
 const SUB_CACHE_TTL = 60000; // 60秒缓存
+const SUB_CACHE_MAX_ENTRIES = 2000;
+const ABUSE_CACHE_TTL_MS = 3600000;
+const ABUSE_CACHE_MAX_ENTRIES = 5000;
+
+const DEFAULT_SUB_UA_ALLOWLIST = [
+  'clash',
+  'clash-meta',
+  'mihomo',
+  'stash',
+  'sing-box',
+  'singbox',
+  'sfa',
+  'sfi',
+  'v2rayn',
+  'v2rayng',
+  'shadowrocket',
+  'quantumult',
+  'surfboard',
+  'nekoray',
+];
+const subGuard = createSubGuard({
+  mode: process.env.SUB_CLIENT_FILTER_MODE || 'off',
+  uaAllowlist: process.env.SUB_UA_ALLOWLIST || '',
+  defaultAllowlist: DEFAULT_SUB_UA_ALLOWLIST,
+  tokenWindowMs: process.env.SUB_TOKEN_WINDOW_MS || '60000',
+  tokenMaxReq: process.env.SUB_TOKEN_MAX_REQ || '20',
+  tokenBanMs: process.env.SUB_TOKEN_BAN_MS || '900000',
+  behaviorWindowMs: process.env.SUB_BEHAVIOR_WINDOW_MS || '120000',
+  behaviorMaxIps: process.env.SUB_BEHAVIOR_MAX_IPS || '6',
+  behaviorMaxUas: process.env.SUB_BEHAVIOR_MAX_UAS || '4',
+});
 
 function invalidateSubCache(token) {
   if (token) _subCache.delete(token);
   else _subCache.clear();
 }
 
-function getRealClientIp(req) {
-  const cfIp = req.headers['cf-connecting-ip'];
-  if (cfIp) return String(cfIp).trim();
-
-  const xff = req.headers['x-forwarded-for'];
-  if (xff) {
-    const first = String(xff).split(',')[0].trim();
-    if (first) return first;
+function setSubCache(cacheKey, value) {
+  if (!_subCache.has(cacheKey) && _subCache.size >= SUB_CACHE_MAX_ENTRIES) {
+    let oldestKey = null;
+    let oldestTs = Infinity;
+    for (const [key, entry] of _subCache) {
+      const ts = Number(entry?.ts || 0);
+      if (ts < oldestTs) {
+        oldestTs = ts;
+        oldestKey = key;
+      }
+    }
+    if (oldestKey) _subCache.delete(oldestKey);
   }
+  _subCache.set(cacheKey, value);
+}
 
-  const realIp = req.headers['x-real-ip'];
-  if (realIp) return String(realIp).trim();
+function cleanupAbuseCache(now = Date.now()) {
+  for (const [k, ts] of _abuseCache) {
+    if (now - ts > ABUSE_CACHE_TTL_MS) _abuseCache.delete(k);
+  }
+  if (_abuseCache.size <= ABUSE_CACHE_MAX_ENTRIES) return;
+  const sorted = [..._abuseCache.entries()].sort((a, b) => a[1] - b[1]);
+  const removeCount = _abuseCache.size - ABUSE_CACHE_MAX_ENTRIES;
+  for (let i = 0; i < removeCount; i++) {
+    _abuseCache.delete(sorted[i][0]);
+  }
+}
 
-  return req.ip;
+function getUserNodeUuidMap(userId, nodes) {
+  const map = new Map();
+  const existing = db.getUserAllNodeUuids(userId);
+  for (const row of existing) {
+    if (row && row.node_id != null && row.uuid) {
+      map.set(Number(row.node_id), row.uuid);
+    }
+  }
+  // 极端情况下补齐缺失映射（并写库）
+  for (const n of nodes) {
+    if (!map.has(Number(n.id))) {
+      const row = db.getUserNodeUuid(userId, n.id);
+      if (row?.uuid) map.set(Number(n.id), row.uuid);
+    }
+  }
+  return map;
+}
+
+function applySubGuards(token, ua, clientIP) {
+  const result = subGuard.apply(token, ua, clientIP);
+  if (result.reason === 'unknown_ua_observe' && result.shouldLogUnknownUa) {
+      db.addAuditLog(null, 'sub_unknown_ua', `未知客户端 UA: ${String(ua || '').slice(0, 180)} token:${token.slice(0, 8)} ip:${clientIP}`, clientIP);
+  }
+  return result;
 }
 
 // 首页 - 节点列表（每个用户看到自己的 UUID）
@@ -74,13 +146,12 @@ function nextUuidResetAtMs(now = new Date()) {
 function nextTokenResetAtMs(user, now = new Date()) {
   // 根据用户等级计算下次订阅重置时间
   const level = user.trust_level || 0;
-  const isDonor = user.is_donor || false;
 
   // Lv4 不重置
   if (level >= 4) return -1;
 
-  // Lv3 或捐赠者：月初重置
-  if (level >= 3 || isDonor) {
+  // Lv3：月初重置
+  if (level >= 3) {
     const n = getNowShanghaiParts(now);
     // 下个月1号 03:00
     let nextMonth = n.month + 1;
@@ -117,10 +188,11 @@ router.get('/', requireAuth, (req, res) => {
 
   const traffic = db.getUserTraffic(user.id);
   const globalTraffic = db.getGlobalTraffic();
+  const uuidMap = getUserNodeUuidMap(user.id, nodes);
 
   const userNodes = nodes.map(n => {
-    const userUuid = db.getUserNodeUuid(user.id, n.id);
-    return { ...n, link: n.protocol === 'ss' ? buildSsLink(n, userUuid.uuid) : buildVlessLink(n, userUuid.uuid) };
+    const userUuid = uuidMap.get(Number(n.id)) || '';
+    return { ...n, link: n.protocol === 'ss' ? buildSsLink(n, userUuid) : buildVlessLink(n, userUuid) };
   });
 
   // 查询节点 AI 操作标签
@@ -133,7 +205,7 @@ router.get('/', requireAuth, (req, res) => {
       const match = (r.detail || '').match(/节点.*?[:：]\s*(.+)/);
       if (match) nodeAiTags[match[1]] = nodeAiTags[match[1]] || [];
     });
-    const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+    const sevenDaysAgo = toSqlUtc(new Date(Date.now() - 7 * 86400000));
     const swapNodes = d.prepare(`
       SELECT DISTINCT detail FROM audit_log
       WHERE action IN ('auto_swap_ip','swap_ip','ip_rotated') AND created_at > ?
@@ -164,7 +236,7 @@ router.get('/', requireAuth, (req, res) => {
 router.get('/api/peach-status', requireAuth, (req, res) => {
   try {
     const d = db.getDb();
-    const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
+    const today = dateKeyInTimeZone(new Date(), 'Asia/Shanghai');
 
     const todayStats = d.prepare(`
       SELECT
@@ -200,6 +272,7 @@ router.get('/api/peach-status', requireAuth, (req, res) => {
     res.json({
       online: true,
       lastPatrol,
+      lastPatrolDisplay: formatDateTimeInTimeZone(lastPatrol, 'Asia/Shanghai'),
       todayPatrols: todayStats.patrols,
       todaySwaps: todayStats.swaps,
       todayFixes: todayStats.fixes,
@@ -213,7 +286,7 @@ router.get('/api/peach-status', requireAuth, (req, res) => {
       recentEvents: recentEvents.map(e => ({
         action: escapeHtml(e.action),
         detail: escapeHtml((e.detail || '').slice(0, 80)),
-        time: (e.created_at || '').replace('T', ' ').slice(0, 16)
+        time: formatDateTimeInTimeZone(e.created_at, 'Asia/Shanghai')
       }))
     });
   } catch (err) {
@@ -276,7 +349,9 @@ router.get('/sub/:token', subLimiter, (req, res) => {
   const cacheKey = `${token}:${clientType}`;
 
   // 记录拉取 IP（始终执行，不受缓存影响）
-  const clientIP = getRealClientIp(req);
+  const clientIP = getClientIp(req);
+  const guard = applySubGuards(token, ua, clientIP);
+  if (!guard.ok) return res.status(guard.status).type('text').send(guard.message);
 
   // 检查缓存
   const cached = _subCache.get(cacheKey);
@@ -304,8 +379,7 @@ router.get('/sub/:token', subLimiter, (req, res) => {
     const last = _abuseCache.get(user.id) || 0;
     if (now - last > 3600000) {
       _abuseCache.set(user.id, now);
-      // 清理过期条目
-      for (const [k, v] of _abuseCache) { if (now - v > 3600000) _abuseCache.delete(k); }
+      cleanupAbuseCache(now);
       
       notify.abuse(user.username, ips.length);
     }
@@ -313,11 +387,12 @@ router.get('/sub/:token', subLimiter, (req, res) => {
 
   const isVip = db.isInWhitelist(user.nodeloc_id);
   const nodes = db.getAllNodes(true).filter(n => (isVip || user.trust_level >= (n.min_level || 0)) && n.protocol !== 'ss');
+  const uuidMap = getUserNodeUuidMap(user.id, nodes);
 
   // 获取用户在每个节点的 UUID
   const userNodes = nodes.map(n => {
-    const userUuid = db.getUserNodeUuid(user.id, n.id);
-    return { ...n, uuid: userUuid.uuid };
+    const uuid = uuidMap.get(Number(n.id));
+    return { ...n, uuid: uuid || '' };
   });
 
   // 获取用户流量用于 Subscription-Userinfo
@@ -343,7 +418,7 @@ router.get('/sub/:token', subLimiter, (req, res) => {
       'Cache-Control': 'no-cache'
     };
     const body = generateClashSubForUser(finalNodes);
-    _subCache.set(cacheKey, { headers, body, ts: Date.now() });
+    setSubCache(cacheKey, { headers, body, ts: Date.now() });
     res.set(headers);
     return res.send(body);
   }
@@ -356,7 +431,7 @@ router.get('/sub/:token', subLimiter, (req, res) => {
       'Cache-Control': 'no-cache'
     };
     const body = generateSingboxSubForUser(finalNodes);
-    _subCache.set(cacheKey, { headers, body, ts: Date.now() });
+    setSubCache(cacheKey, { headers, body, ts: Date.now() });
     res.set(headers);
     return res.send(body);
   }
@@ -369,7 +444,7 @@ router.get('/sub/:token', subLimiter, (req, res) => {
       'Cache-Control': 'no-cache'
     };
     const body = generateV2raySubForUser(finalNodes, { upload: traffic.total_up, download: traffic.total_down, total: totalBytes });
-    _subCache.set(cacheKey, { headers, body, ts: Date.now() });
+    setSubCache(cacheKey, { headers, body, ts: Date.now() });
     res.set(headers);
     res.send(body);
   }
@@ -388,7 +463,9 @@ router.get('/sub6/:token', subLimiter, (req, res) => {
   const forceType = req.query.type;
   const clientType = forceType || detectClient(ua);
   const cacheKey = `v6:${token}:${clientType}`;
-  const clientIP = getRealClientIp(req);
+  const clientIP = getClientIp(req);
+  const guard = applySubGuards(token, ua, clientIP);
+  if (!guard.ok) return res.status(guard.status).type('text').send(guard.message);
 
   const cached = _subCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < SUB_CACHE_TTL) {
@@ -410,11 +487,12 @@ router.get('/sub6/:token', subLimiter, (req, res) => {
     n.ip_version === 6 && n.protocol === 'ss' &&
     (isVip || user.trust_level >= (n.min_level || 0))
   );
+  const uuidMap = getUserNodeUuidMap(user.id, rawNodes);
 
   // 为每个 SS 节点注入用户独立密码（复用 user_node_uuid 的 uuid 作为 SS 密码）
   const nodes = rawNodes.map(n => {
-    const userUuid = db.getUserNodeUuid(user.id, n.id);
-    return { ...n, userPassword: userUuid.uuid };
+    const userPassword = uuidMap.get(Number(n.id)) || '';
+    return { ...n, userPassword };
   });
 
   const traffic = db.getUserTraffic(user.id);
@@ -437,7 +515,7 @@ router.get('/sub6/:token', subLimiter, (req, res) => {
       'Cache-Control': 'no-cache'
     };
     const body = generateClashSsSub(finalNodes);
-    _subCache.set(cacheKey, { headers, body, ts: Date.now() });
+    setSubCache(cacheKey, { headers, body, ts: Date.now() });
     res.set(headers);
     return res.send(body);
   }
@@ -450,7 +528,7 @@ router.get('/sub6/:token', subLimiter, (req, res) => {
       'Cache-Control': 'no-cache'
     };
     const body = generateSingboxSsSub(finalNodes);
-    _subCache.set(cacheKey, { headers, body, ts: Date.now() });
+    setSubCache(cacheKey, { headers, body, ts: Date.now() });
     res.set(headers);
     return res.send(body);
   }
@@ -463,7 +541,7 @@ router.get('/sub6/:token', subLimiter, (req, res) => {
       'Cache-Control': 'no-cache'
     };
     const body = generateV2raySsSub(finalNodes, { upload: traffic.total_up, download: traffic.total_down, total: totalBytes });
-    _subCache.set(cacheKey, { headers, body, ts: Date.now() });
+    setSubCache(cacheKey, { headers, body, ts: Date.now() });
     res.set(headers);
     res.send(body);
   }
@@ -502,90 +580,6 @@ router.get('/api/traffic-detail', requireAuth, (req, res) => {
   const detail = db.getUserTrafficDaily(req.user.id, days);
   const trend = db.getUserTrafficDailyAgg(req.user.id, days);
   res.json({ ok: true, detail, trend });
-});
-
-// Sprint 6: 节点延迟测试 API（TCP ping）
-
-// ─── 捐赠节点模块 ───
-const { v4: uuidv4 } = require('uuid');
-const path = require('path');
-const fs = require('fs');
-
-// 捐赠安装脚本下载 agent.js
-router.get('/donate/agent.js', (req, res) => {
-  const agentPath = path.join(__dirname, '..', '..', 'node-agent', 'agent.js');
-  if (fs.existsSync(agentPath)) {
-    res.type('application/javascript').sendFile(agentPath);
-  } else {
-    res.status(404).send('agent not found');
-  }
-});
-
-router.get('/donate', requireAuth, (req, res) => {
-  const user = req.user;
-  const d = db.getDb();
-
-  // 获取用户的捐赠记录
-  const donations = d.prepare(`
-    SELECT nd.*, n.is_active as node_is_active 
-    FROM node_donations nd 
-    LEFT JOIN nodes n ON nd.node_id = n.id 
-    WHERE nd.user_id = ? AND nd.status IN ('pending', 'online') 
-    ORDER BY nd.created_at DESC
-  `).all(user.id);
-
-  // 生成或获取用户的捐赠 token
-  // 如果已有 token 且未被使用（无 node_donations 记录），复用它
-  // 如果已有 token 但已被使用，生成新的
-  const tokenRecords = d.prepare('SELECT * FROM donate_tokens WHERE user_id = ? ORDER BY created_at DESC').all(user.id);
-  let donateToken;
-  const unusedToken = tokenRecords.find(t => !d.prepare('SELECT id FROM node_donations WHERE token = ?').get(t.token));
-  if (unusedToken) {
-    donateToken = unusedToken.token;
-  } else {
-    donateToken = 'donate-' + uuidv4();
-    d.prepare("INSERT INTO donate_tokens (user_id, token, created_at) VALUES (?, ?, datetime('now', 'localtime'))").run(user.id, donateToken);
-  }
-
-  // 读取当前token的协议选择
-  const tokenRow = d.prepare('SELECT protocol_choice FROM donate_tokens WHERE token = ?').get(donateToken);
-  const protocolChoice = tokenRow?.protocol_choice || 'vless';
-
-  const wsUrl = process.env.AGENT_WS_URL || 'wss://vip.vip.sd/ws/agent';
-  const installCmd = `bash <(curl -sL https://vip.vip.sd/donate/install.sh) ${wsUrl} ${donateToken} ${protocolChoice}`;
-
-  // 捐赠者排行榜（只统计在线节点）
-  const donors = d.prepare(`
-    SELECT u.username, u.name, COUNT(nd.id) as count
-    FROM node_donations nd 
-    JOIN users u ON nd.user_id = u.id
-    JOIN nodes n ON nd.node_id = n.id
-    WHERE nd.status = 'online' AND n.is_active = 1
-    GROUP BY nd.user_id ORDER BY count DESC LIMIT 10
-  `).all();
-
-  res.render('donate', { user, donations, donateToken, installCmd, donors, protocolChoice });
-});
-
-// 保存协议选择
-router.post('/donate/set-protocol', requireAuth, (req, res) => {
-  const { protocol, token } = req.body;
-  if (!['vless', 'ss', 'dual'].includes(protocol)) return res.json({ ok: false, error: '无效协议' });
-  const d = db.getDb();
-  d.prepare('UPDATE donate_tokens SET protocol_choice = ? WHERE token = ? AND user_id = ?').run(protocol, token, req.user.id);
-  // 同步更新到 node_donations（如果已有连接记录）
-  d.prepare('UPDATE node_donations SET protocol_choice = ? WHERE token = ? AND user_id = ?').run(protocol, token, req.user.id);
-  res.json({ ok: true });
-});
-
-router.post('/donate/generate', requireAuth, (req, res) => {
-  const user = req.user;
-  const d = db.getDb();
-  const token = 'donate-' + uuidv4();
-  // 只记录令牌绑定用户，不插 node_donations，等 Agent 真正连上来再创建记录
-  d.prepare("INSERT OR REPLACE INTO donate_tokens (user_id, token, created_at) VALUES (?, ?, datetime('now', 'localtime'))").run(user.id, token);
-  db.addAuditLog(user.id, 'donate_generate', `用户 ${user.username} 生成捐赠令牌`, '');
-  res.json({ ok: true, token });
 });
 
 module.exports = router;

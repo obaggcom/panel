@@ -49,6 +49,36 @@
     let _searchTimer = null;
     let _userSortBy = 'total_traffic';
     let _userSortDir = 'DESC';
+    const _userNameById = new Map();
+    const _userExpiryById = new Map();
+
+    function _escHtml(v) {
+      if (v == null) return '';
+      return String(v)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function _safeAvatarUrl(url) {
+      if (!url) return '';
+      const raw = String(url).trim();
+      if (!raw) return '';
+      if (/^https?:\/\//i.test(raw) || raw.startsWith('/')) return _escHtml(raw);
+      return '';
+    }
+
+    window.setTrafficLimitById = function(userId, currentLimit) {
+      const username = _userNameById.get(userId) || String(userId);
+      setTrafficLimit(userId, username, currentLimit);
+    };
+    window.setExpiryById = function(userId) {
+      const username = _userNameById.get(userId) || String(userId);
+      const currentExpiry = _userExpiryById.get(userId) || '';
+      setExpiry(userId, username, currentExpiry);
+    };
 
     window.sortUsers = function(col) {
       if (_userSortBy === col) {
@@ -92,7 +122,17 @@
       }
 
       // 公共数据
+      _userNameById.clear();
+      _userExpiryById.clear();
       const rowsHtml = data.rows.map(u => {
+        _userNameById.set(u.id, String(u.username || ''));
+        _userExpiryById.set(u.id, String(u.expires_at || ''));
+        const safeUsername = _escHtml(u.username || '');
+        const safeAvatar = _safeAvatarUrl(u.avatar_url);
+        const safeNodeLocId = _escHtml(u.nodeloc_id || '-');
+        const safeTrustLevel = _escHtml(u.trust_level || 0);
+        const safeLastLogin = _escHtml(u.last_login || '-');
+        const safeUserId = Number(u.id) || 0;
         const statusClass = u.is_blocked ? 'bg-red-500/20 text-red-300' : u.is_frozen ? 'bg-blue-500/20 text-blue-300' : 'bg-emerald-500/20 text-emerald-300';
         const statusText = u.is_blocked ? '已封禁' : u.is_frozen ? '已冻结' : '正常';
         const blockBtnClass = u.is_blocked ? 'text-emerald-400' : 'text-red-400';
@@ -100,53 +140,53 @@
         const limitText = u.traffic_limit ? _fmtBytes(u.traffic_limit) : '∞';
         const expiryText = u.expires_at ? u.expires_at.slice(0,10) : '永久';
         const expiryClass = u.expires_at && new Date(u.expires_at) < new Date() ? 'text-red-400' : 'text-gray-400';
-        return { u, statusClass, statusText, blockBtnClass, blockBtnText, limitText, expiryText, expiryClass };
+        return { u, safeUsername, safeAvatar, safeNodeLocId, safeTrustLevel, safeLastLogin, safeUserId, statusClass, statusText, blockBtnClass, blockBtnText, limitText, expiryText, expiryClass };
       });
 
       // 桌面端表格
-      tbody.innerHTML = rowsHtml.map(({u, statusClass, statusText, blockBtnClass, blockBtnText, limitText, expiryText, expiryClass}) => {
+      tbody.innerHTML = rowsHtml.map(({u, safeUsername, safeAvatar, safeNodeLocId, safeTrustLevel, safeLastLogin, safeUserId, statusClass, statusText, blockBtnClass, blockBtnText, limitText, expiryText, expiryClass}) => {
         return `<tr class="border-b border-white/5 hover:bg-white/[0.02]">
           <td class="py-3 px-4 flex items-center gap-2">
-            <img src="${u.avatar_url || ''}" class="w-6 h-6 rounded-full ring-1 ring-white/10 bg-gray-800" onerror="this.style.display='none'">
-            <span class="text-white text-sm">${u.username}</span>
+            <img src="${safeAvatar}" class="w-6 h-6 rounded-full ring-1 ring-white/10 bg-gray-800" onerror="this.style.display='none'">
+            <span class="text-white text-sm">${safeUsername}</span>
             ${u.is_admin ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">管理</span>' : ''}
           </td>
-          <td class="py-3 px-4 text-xs text-gray-500">${u.nodeloc_id}</td>
-          <td class="py-3 px-4 text-xs">${u.trust_level}</td>
+          <td class="py-3 px-4 text-xs text-gray-500">${safeNodeLocId}</td>
+          <td class="py-3 px-4 text-xs">${safeTrustLevel}</td>
           <td class="py-3 px-4 text-xs text-gray-400">
-            ${_fmtBytes(u.total_traffic || 0)} / <span class="cursor-pointer text-cyan-400 hover:underline" onclick="setTrafficLimit(${u.id}, '${u.username}', ${u.traffic_limit || 0})">${limitText}</span>
+            ${_fmtBytes(u.total_traffic || 0)} / <span class="cursor-pointer text-cyan-400 hover:underline" onclick="setTrafficLimitById(${safeUserId}, ${u.traffic_limit || 0})">${limitText}</span>
           </td>
-          <td class="py-3 px-4 text-xs"><span class="cursor-pointer ${expiryClass} hover:underline" onclick="setExpiry(${u.id}, '${u.username}', '${u.expires_at || ''}')">${expiryText}</span></td>
-          <td class="py-3 px-4 text-xs text-gray-500">${u.last_login || '-'}</td>
+          <td class="py-3 px-4 text-xs"><span class="cursor-pointer ${expiryClass} hover:underline" onclick="setExpiryById(${safeUserId})">${expiryText}</span></td>
+          <td class="py-3 px-4 text-xs text-gray-500">${safeLastLogin}</td>
           <td class="py-3 px-4"><span class="text-[10px] px-2 py-0.5 rounded-full ${statusClass}">${statusText}</span></td>
           <td class="py-3 px-4 space-x-2">
-            <form method="POST" action="/admin/api/users/${u.id}/toggle-block" class="inline"><input type="hidden" name="_csrf" value="${csrfToken}"><button class="text-xs ${blockBtnClass} hover:underline">${blockBtnText}</button></form>
-            <form method="POST" action="/admin/api/users/${u.id}/reset-token" class="inline"><input type="hidden" name="_csrf" value="${csrfToken}"><button type="button" class="text-xs text-amber-400 hover:underline" onclick="_confirm('重置订阅？').then(ok=>{if(ok)this.closest('form').submit()})">重置</button></form>
+            <form method="POST" action="/admin/api/users/${safeUserId}/toggle-block" class="inline"><input type="hidden" name="_csrf" value="${csrfToken}"><button class="text-xs ${blockBtnClass} hover:underline">${blockBtnText}</button></form>
+            <form method="POST" action="/admin/api/users/${safeUserId}/reset-token" class="inline"><input type="hidden" name="_csrf" value="${csrfToken}"><button type="button" class="text-xs text-amber-400 hover:underline" onclick="_confirm('重置订阅？').then(ok=>{if(ok)this.closest('form').submit()})">重置</button></form>
           </td>
         </tr>`;
       }).join('');
 
       // 移动端卡片
-      cards.innerHTML = rowsHtml.map(({u, statusClass, statusText, blockBtnClass, blockBtnText, limitText, expiryText, expiryClass}) => {
+      cards.innerHTML = rowsHtml.map(({u, safeUsername, safeAvatar, safeNodeLocId, safeTrustLevel, safeLastLogin, safeUserId, statusClass, statusText, blockBtnClass, blockBtnText, limitText, expiryText, expiryClass}) => {
         return `<div class="glass rounded-2xl p-4 space-y-2">
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-2">
-              <img src="${u.avatar_url || ''}" class="w-6 h-6 rounded-full ring-1 ring-white/10 bg-gray-800" onerror="this.style.display='none'">
-              <span class="text-white text-sm font-medium">${u.username}</span>
+              <img src="${safeAvatar}" class="w-6 h-6 rounded-full ring-1 ring-white/10 bg-gray-800" onerror="this.style.display='none'">
+              <span class="text-white text-sm font-medium">${safeUsername}</span>
               ${u.is_admin ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">管理</span>' : ''}
             </div>
             <span class="text-[10px] px-2 py-0.5 rounded-full ${statusClass}">${statusText}</span>
           </div>
           <div class="grid grid-cols-2 gap-1.5 text-xs">
-            <div><span class="text-gray-500">ID</span><span class="block text-gray-400 mt-0.5">${u.nodeloc_id}</span></div>
-            <div><span class="text-gray-500">等级</span><span class="block text-gray-300 mt-0.5">${u.trust_level}</span></div>
-            <div><span class="text-gray-500">流量</span><span class="block text-gray-400 mt-0.5">${_fmtBytes(u.total_traffic || 0)} / <span class="cursor-pointer text-cyan-400" onclick="setTrafficLimit(${u.id}, '${u.username}', ${u.traffic_limit || 0})">${limitText}</span></span></div>
-            <div><span class="text-gray-500">到期</span><span class="block mt-0.5 cursor-pointer ${expiryClass}" onclick="setExpiry(${u.id}, '${u.username}', '${u.expires_at || ''}')">${expiryText}</span></div>
-            <div class="col-span-2"><span class="text-gray-500">最后活跃</span><span class="text-gray-500 ml-2">${u.last_login || '-'}</span></div>
+            <div><span class="text-gray-500">ID</span><span class="block text-gray-400 mt-0.5">${safeNodeLocId}</span></div>
+            <div><span class="text-gray-500">等级</span><span class="block text-gray-300 mt-0.5">${safeTrustLevel}</span></div>
+            <div><span class="text-gray-500">流量</span><span class="block text-gray-400 mt-0.5">${_fmtBytes(u.total_traffic || 0)} / <span class="cursor-pointer text-cyan-400" onclick="setTrafficLimitById(${safeUserId}, ${u.traffic_limit || 0})">${limitText}</span></span></div>
+            <div><span class="text-gray-500">到期</span><span class="block mt-0.5 cursor-pointer ${expiryClass}" onclick="setExpiryById(${safeUserId})">${expiryText}</span></div>
+            <div class="col-span-2"><span class="text-gray-500">最后活跃</span><span class="text-gray-500 ml-2">${safeLastLogin}</span></div>
           </div>
           <div class="flex gap-3 pt-1.5 border-t border-white/5">
-            <form method="POST" action="/admin/api/users/${u.id}/toggle-block" class="inline"><input type="hidden" name="_csrf" value="${csrfToken}"><button class="text-xs ${blockBtnClass} hover:underline">${blockBtnText}</button></form>
-            <form method="POST" action="/admin/api/users/${u.id}/reset-token" class="inline"><input type="hidden" name="_csrf" value="${csrfToken}"><button type="button" class="text-xs text-amber-400 hover:underline" onclick="_confirm('重置订阅？').then(ok=>{if(ok)this.closest('form').submit()})">重置</button></form>
+            <form method="POST" action="/admin/api/users/${safeUserId}/toggle-block" class="inline"><input type="hidden" name="_csrf" value="${csrfToken}"><button class="text-xs ${blockBtnClass} hover:underline">${blockBtnText}</button></form>
+            <form method="POST" action="/admin/api/users/${safeUserId}/reset-token" class="inline"><input type="hidden" name="_csrf" value="${csrfToken}"><button type="button" class="text-xs text-amber-400 hover:underline" onclick="_confirm('重置订阅？').then(ok=>{if(ok)this.closest('form').submit()})">重置</button></form>
           </div>
         </div>`;
       }).join('');

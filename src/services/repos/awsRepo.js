@@ -1,4 +1,5 @@
 const { encrypt, decrypt } = require('../../utils/crypto');
+const { toSqlUtc } = require('../../utils/time');
 
 let _getDb;
 
@@ -28,7 +29,7 @@ function getAwsAccountById(id) {
 function addAwsAccount(account) {
   return _getDb().prepare(`
     INSERT INTO aws_accounts (name, access_key, secret_key, default_region, socks5_host, socks5_port, socks5_user, socks5_pass, enabled, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
   `).run(
     account.name,
     encrypt(account.access_key),
@@ -49,7 +50,7 @@ function updateAwsAccount(id, fields) {
   if (safe.socks5_pass) safe.socks5_pass = encrypt(safe.socks5_pass);
   const allowed = ['name','access_key','secret_key','default_region','socks5_host','socks5_port','socks5_user','socks5_pass','enabled'];
   const obj = Object.fromEntries(Object.entries(safe).filter(([k]) => allowed.includes(k)));
-  obj.updated_at = new Date().toISOString().replace('T', ' ').substring(0, 19);
+  obj.updated_at = toSqlUtc();
   const keys = Object.keys(obj);
   if (!keys.length) return;
   const sets = keys.map(k => `${k} = ?`).join(', ');

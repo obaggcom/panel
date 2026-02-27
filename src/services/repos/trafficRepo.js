@@ -1,4 +1,5 @@
 let _getDb, _getUserById;
+const { dateKeyInTimeZone, dateKeyDaysAgo } = require('../../utils/time');
 
 function init(deps) {
   _getDb = deps.getDb;
@@ -7,7 +8,7 @@ function init(deps) {
 
 function recordTraffic(userId, nodeId, uplink, downlink) {
   _getDb().prepare('INSERT INTO traffic (user_id, node_id, uplink, downlink) VALUES (?, ?, ?, ?)').run(userId, nodeId, uplink, downlink);
-  const today = new Date(Date.now() + 8 * 3600000).toISOString().split('T')[0]; // Asia/Shanghai
+  const today = dateKeyInTimeZone(new Date(), 'Asia/Shanghai');
   _getDb().prepare(`
     INSERT INTO traffic_daily (user_id, node_id, date, uplink, downlink)
     VALUES (?, ?, ?, ?, ?)
@@ -15,6 +16,14 @@ function recordTraffic(userId, nodeId, uplink, downlink) {
       uplink = uplink + excluded.uplink,
       downlink = downlink + excluded.downlink
   `).run(userId, nodeId, today, uplink, downlink);
+  _getDb().prepare(`
+    INSERT INTO traffic_user_total (user_id, total_up, total_down, updated_at)
+    VALUES (?, ?, ?, datetime('now'))
+    ON CONFLICT(user_id) DO UPDATE SET
+      total_up = total_up + excluded.total_up,
+      total_down = total_down + excluded.total_down,
+      updated_at = datetime('now')
+  `).run(userId, uplink, downlink);
 }
 
 function getUserTraffic(userId) {
@@ -64,7 +73,7 @@ function getGlobalTraffic() {
 }
 
 function getTodayTraffic() {
-  const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
+  const today = dateKeyInTimeZone(new Date(), 'Asia/Shanghai');
   return _getDb().prepare(`
     SELECT COALESCE(SUM(uplink), 0) as total_up, COALESCE(SUM(downlink), 0) as total_down
     FROM traffic_daily WHERE date = ?
@@ -72,15 +81,13 @@ function getTodayTraffic() {
 }
 
 function _rangeDateCondition(range) {
-  const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
+  const today = dateKeyInTimeZone(new Date(), 'Asia/Shanghai');
   if (range === 'today') return { where: 'AND t.date = ?', params: [today] };
   if (range === '7d') {
-    const d = new Date(); d.setDate(d.getDate() - 6);
-    return { where: 'AND t.date >= ?', params: [new Date(d.getTime() + 8 * 3600000).toISOString().slice(0, 10)] };
+    return { where: 'AND t.date >= ?', params: [dateKeyDaysAgo(6, 'Asia/Shanghai')] };
   }
   if (range === '30d') {
-    const d = new Date(); d.setDate(d.getDate() - 29);
-    return { where: 'AND t.date >= ?', params: [new Date(d.getTime() + 8 * 3600000).toISOString().slice(0, 10)] };
+    return { where: 'AND t.date >= ?', params: [dateKeyDaysAgo(29, 'Asia/Shanghai')] };
   }
   if (range === 'all') return { where: '', params: [] };
   // 支持具体日期 YYYY-MM-DD
@@ -126,8 +133,7 @@ function getNodesTrafficByRange(range) {
 }
 
 function getTrafficTrend(days = 30) {
-  const d = new Date(); d.setDate(d.getDate() - days + 1);
-  const startDate = new Date(d.getTime() + 8 * 3600000).toISOString().slice(0, 10);
+  const startDate = dateKeyDaysAgo(days - 1, 'Asia/Shanghai');
   return _getDb().prepare(`
     SELECT date,
       COALESCE(SUM(uplink), 0) as total_up,
@@ -141,8 +147,7 @@ function getTrafficTrend(days = 30) {
 
 // Sprint 6: 用户按天/按节点的流量明细
 function getUserTrafficDaily(userId, days = 30) {
-  const d = new Date(); d.setDate(d.getDate() - days + 1);
-  const startDate = new Date(d.getTime() + 8 * 3600000).toISOString().slice(0, 10);
+  const startDate = dateKeyDaysAgo(days - 1, 'Asia/Shanghai');
   return _getDb().prepare(`
     SELECT td.date, td.node_id, n.name as node_name,
       td.uplink, td.downlink
@@ -154,8 +159,7 @@ function getUserTrafficDaily(userId, days = 30) {
 }
 
 function getUserTrafficDailyAgg(userId, days = 30) {
-  const d = new Date(); d.setDate(d.getDate() - days + 1);
-  const startDate = new Date(d.getTime() + 8 * 3600000).toISOString().slice(0, 10);
+  const startDate = dateKeyDaysAgo(days - 1, 'Asia/Shanghai');
   return _getDb().prepare(`
     SELECT date,
       COALESCE(SUM(uplink), 0) as total_up,

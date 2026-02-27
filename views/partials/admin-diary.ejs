@@ -40,8 +40,8 @@ async function loadDiary(page = 1) {
     if (d.stats) {
       document.getElementById('diary-total').textContent = d.stats.total;
       document.getElementById('diary-today').textContent = d.stats.todayCount;
-      document.getElementById('diary-first').textContent = d.stats.firstEntry
-        ? d.stats.firstEntry.slice(0, 10) : '还没有呢';
+      document.getElementById('diary-first').textContent = d.stats.firstEntryDisplay
+        ? d.stats.firstEntryDisplay.slice(0, 10) : '还没有呢';
     }
 
     // 时间线
@@ -56,13 +56,13 @@ async function loadDiary(page = 1) {
       let lastDate = '';
       let html = '';
       for (const entry of d.rows) {
-        const date = entry.created_at.slice(0, 10);
-        const time = entry.created_at.slice(11, 16);
+        const date = entry.created_date_display || '';
+        const time = entry.created_time_display || '';
 
         // 日期分隔
         if (date !== lastDate) {
           lastDate = date;
-          const weekday = ['日','一','二','三','四','五','六'][new Date(date).getDay()];
+          const weekday = (entry.created_weekday_display || '').replace(/^周/, '');
           html += `<div class="flex items-center gap-3 py-3 ${html ? 'mt-2' : ''}">
             <div class="h-px flex-1 bg-white/5"></div>
             <span class="text-xs text-gray-400 font-medium">📅 ${date} 星期${weekday}</span>
