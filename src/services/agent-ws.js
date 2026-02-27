@@ -223,8 +223,7 @@ async function autoApproveDonation({ ws, d, donation, ip, protoChoice, tempId })
         }
 
         try {
-          const { notify: _notify } = require('./notify');
-          _notify.deploy && _notify.deploy(node?.name || ip, true, `🍑 蜜桃酱自动审核 | 协议: ${protoChoice} | 捐赠者: ${donorName}`);
+          notify.deploy && notify.deploy(node?.name || ip, true, `🍑 蜜桃酱自动审核 | 协议: ${protoChoice} | 捐赠者: ${donorName}`);
         } catch {}
 
         console.log(`[🍑 蜜桃酱] 自动审核完成: ${nodeIds.length} 个节点上线`);
