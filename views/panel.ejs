@@ -112,7 +112,7 @@
     <!-- 节点列表（按分组展示） -->
     <div>
       <div class="flex items-center justify-between mb-3 gap-2">
-        <h2 class="text-white font-semibold">🌐 可用节点</h2>
+        <h2 class="<%= user.is_donor ? 'text-amber-300' : 'text-white' %> font-semibold">🌐 可用节点</h2>
         <div class="flex items-center gap-2">
           <span class="text-gray-600 text-xs"><%= userNodes.length %> 个节点</span>
         </div>
