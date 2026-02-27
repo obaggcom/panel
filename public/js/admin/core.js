@@ -3,8 +3,20 @@
 function showToast(msg, ms) { toast(msg, ms); }
 
 function switchTab(name) {
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
-  document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.dataset.tab === name));
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    const active = b.dataset.tab === name;
+    b.classList.toggle('active', active);
+    b.setAttribute('aria-selected', active ? 'true' : 'false');
+    b.setAttribute('tabindex', active ? '0' : '-1');
+  });
+  document.querySelectorAll('.tab-panel').forEach(p => {
+    const active = p.dataset.tab === name;
+    p.classList.toggle('active', active);
+    p.id = 'tab-panel-' + p.dataset.tab;
+    p.setAttribute('role', 'tabpanel');
+    p.setAttribute('aria-labelledby', 'tab-btn-' + p.dataset.tab);
+    p.setAttribute('aria-hidden', active ? 'false' : 'true');
+  });
   const sel = document.getElementById('tab-select');
   if (sel) sel.value = name;
   location.hash = name;
@@ -63,6 +75,24 @@ function updateNodeLevel(id, level) {
 }
 
 
+
+
+// 键盘左右切换 tab（可访问性）
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('keydown', (e) => {
+    if (!['ArrowLeft','ArrowRight','Home','End'].includes(e.key)) return;
+    const tabs = Array.from(document.querySelectorAll('.tab-btn'));
+    const idx = tabs.indexOf(btn);
+    let next = idx;
+    if (e.key === 'ArrowRight') next = (idx + 1) % tabs.length;
+    if (e.key === 'ArrowLeft') next = (idx - 1 + tabs.length) % tabs.length;
+    if (e.key === 'Home') next = 0;
+    if (e.key === 'End') next = tabs.length - 1;
+    e.preventDefault();
+    tabs[next].focus();
+    switchTab(tabs[next].dataset.tab);
+  });
+});
 
 // 初始 hash tab
 if (location.hash.slice(1)) switchTab(location.hash.slice(1));
