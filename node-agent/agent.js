@@ -164,9 +164,19 @@ function hasGlobalIPv6() {
   return false;
 }
 
-// IPv6 连通性检测（没有 IPv6 地址的节点直接跳过）
+// 检测本机 xray 是否配置了 Shadowsocks 协议
+function hasShadowsocksInbound() {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(XRAY_CONFIG_PATH, 'utf8'));
+    return (cfg.inbounds || []).some(ib => ib.protocol === 'shadowsocks');
+  } catch {
+    return false;
+  }
+}
+
+// IPv6 连通性检测（仅有 IPv6 + SS 协议的节点才检测）
 async function checkIPv6Reachable() {
-  if (!hasGlobalIPv6()) return null; // null = 不适用
+  if (!hasGlobalIPv6() || !hasShadowsocksInbound()) return null;
   try {
     return await tcpProbe(IPV6_PROBE_TARGET.host, IPV6_PROBE_TARGET.port, 5000);
   } catch {
