@@ -71,6 +71,15 @@ const AGENT_CAPABILITIES = {
   selfHeal: true,
   selfUpdate: true,
 };
+const PANEL_HOST = (() => {
+  try { return new URL(config.server).hostname.toLowerCase(); } catch { return null; }
+})();
+const SAFE_DOWNLOAD_HOSTS = new Set([PANEL_HOST, 'vip.vip.sd'].filter(Boolean));
+const DANGEROUS_SHELL_PATTERN = /[|;&`<>]|\$\(|\r|\n/;
+
+function extractCommandUrls(cmd) {
+  return (cmd.match(/https?:\/\/[^\s"']+/g) || []);
+}
 const reconnectMetrics = {
   disconnectCount: 0,
   lastDisconnectAt: null,
@@ -318,9 +327,17 @@ async function handleCommand(msg) {
 
     case 'exec': {
       if (!msg.command) { reply({ success: false, error: '缺少 command 字段' }); break; }
+      const cmd = msg.command.trim();
+
+      // 基础防护：拒绝危险 shell 元字符（防止管道、命令拼接、命令替换）
+      if (DANGEROUS_SHELL_PATTERN.test(cmd)) {
+        log('WARN', `⚠️  exec 指令含危险字符，已拒绝: ${cmd}`);
+        reply({ success: false, error: '指令包含危险字符（|;&`<>,$(),换行）' });
+        break;
+      }
+
       // 白名单校验
       if (EXEC_WHITELIST_ENABLED) {
-        const cmd = msg.command.trim();
         const allowed = EXEC_WHITELIST.some(prefix => cmd.startsWith(prefix));
         if (!allowed) {
           log('WARN', `⚠️  exec 指令被白名单拒绝: ${cmd}`);
@@ -328,6 +345,27 @@ async function handleCommand(msg) {
           break;
         }
       }
+
+      // curl/wget 仅允许下载面板域名，避免执行任意远程脚本
+      if (cmd.startsWith('curl ') || cmd.startsWith('wget ')) {
+        const urls = extractCommandUrls(cmd);
+        if (urls.length > 0) {
+          const forbidden = urls.find((u) => {
+            try {
+              const h = new URL(u).hostname.toLowerCase();
+              return !SAFE_DOWNLOAD_HOSTS.has(h);
+            } catch {
+              return true;
+            }
+          });
+          if (forbidden) {
+            log('WARN', `⚠️  exec 下载域名不在白名单，已拒绝: ${forbidden}`);
+            reply({ success: false, error: `下载域名不在白名单: ${forbidden}` });
+            break;
+          }
+        }
+      }
+
       const timeout = Math.min(msg.timeout || 30000, 120000);
       const result = await run(msg.command, timeout);
       reply({ success: result.ok, stdout: result.stdout, stderr: result.stderr, code: result.code });
