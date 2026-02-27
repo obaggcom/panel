@@ -1,17 +1,24 @@
 #!/bin/bash
 # 捐赠节点一键部署脚本
-# 用法: bash <(curl -sL https://vip.vip.sd/donate/install.sh) <ws_url> <token>
+# 用法: bash <(curl -sL https://vip.vip.sd/donate/install.sh) <ws_url> <token> [protocol]
 
 set -e
 
 WS_URL="$1"
 TOKEN="$2"
+PROTOCOL="${3:-vless}"
 
 if [ -z "$WS_URL" ] || [ -z "$TOKEN" ]; then
   echo "❌ 缺少参数"
-  echo "用法: bash install.sh <ws_url> <token>"
+  echo "用法: bash install.sh <ws_url> <token> [vless|ss|dual]"
   exit 1
 fi
+
+# 校验协议参数
+case "$PROTOCOL" in
+  vless|ss|dual) ;;
+  *) echo "❌ 不支持的协议: $PROTOCOL（可选: vless / ss / dual）"; exit 1 ;;
+esac
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "❌ 请以 root 身份运行"
@@ -20,6 +27,7 @@ fi
 
 echo "🍑 小姨子的诱惑 - 捐赠节点部署"
 echo "=================================="
+echo "📡 协议: $PROTOCOL"
 
 # 检测系统
 if command -v apt-get &>/dev/null; then
@@ -52,12 +60,15 @@ if ! command -v node &>/dev/null; then
 fi
 echo "✅ Node.js: $(node -v)"
 
+# 通知面板协议选择
+PANEL_URL=$(echo "$WS_URL" | sed 's|wss://|https://|;s|ws://|http://|;s|/ws/agent||')
+curl -sL "${PANEL_URL}/donate/set-protocol" -X POST -H "Content-Type: application/json" -d "{\"protocol\":\"${PROTOCOL}\",\"token\":\"${TOKEN}\"}" > /dev/null 2>&1 || true
+
 # 下载 Agent
 echo "📦 部署 Agent..."
 mkdir -p /opt/vless-agent /etc/vless-agent
 
 # 从面板下载 agent.js
-PANEL_URL=$(echo "$WS_URL" | sed 's|wss://|https://|;s|ws://|http://|;s|/ws/agent||')
 curl -sL "${PANEL_URL}/donate/agent.js" -o /opt/vless-agent/agent.js
 chmod 755 /opt/vless-agent/agent.js
 

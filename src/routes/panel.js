@@ -549,7 +549,7 @@ router.get('/donate', requireAuth, (req, res) => {
   }
 
   const wsUrl = process.env.AGENT_WS_URL || 'wss://vip.vip.sd/ws/agent';
-  const installCmd = `bash <(curl -sL https://vip.vip.sd/donate/install.sh) ${wsUrl} ${donateToken}`;
+  const installCmd = `bash <(curl -sL https://vip.vip.sd/donate/install.sh) ${wsUrl} ${donateToken} ${protocolChoice || 'vless'}`;
 
   // 捐赠者排行榜（只统计在线节点）
   const donors = d.prepare(`

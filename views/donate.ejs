@@ -191,6 +191,9 @@
       document.querySelectorAll('.proto-btn').forEach(b => b.classList.remove('proto-active'));
       document.getElementById('proto-' + proto).classList.add('proto-active');
       document.getElementById('proto-hint').textContent = protoHints[proto];
+      // 更新命令中的协议参数
+      const cmdEl = document.getElementById('install-cmd');
+      cmdEl.textContent = cmdEl.textContent.replace(/\s+(vless|ss|dual)\s*$/, ' ' + proto);
       // 保存选择到后端
       fetch('/donate/set-protocol', {
         method: 'POST',
