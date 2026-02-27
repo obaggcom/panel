@@ -3,6 +3,15 @@
 let currentRange = 'today';
 let trafficChart = null;
 
+function closeUserDetailModal() {
+  const modal = document.getElementById('user-detail-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+function _getUserDetailCardStyle() {
+  return 'width:min(680px,96vw);max-height:92vh;overflow-y:auto;margin:0 auto;';
+}
+
 function fmtBytes(b) {
   if (!b) return '0 B';
   const u = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -155,17 +164,18 @@ async function showUserDetail(userId) {
   if (!modal) {
     modal = document.createElement('div');
     modal.id = 'user-detail-modal';
-    modal.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm';
-    modal.onclick = (e) => { if (e.target === modal) modal.classList.add('hidden'); };
+    modal.className = 'fixed inset-0 z-50 hidden overflow-y-auto bg-black/60 backdrop-blur-sm p-3';
+    modal.onclick = (e) => { if (e.target === modal) closeUserDetailModal(); };
     document.body.appendChild(modal);
   }
+  modal.classList.add('flex', 'justify-center', 'items-center');
   modal.classList.remove('hidden');
-  modal.innerHTML = '<div class="glass rounded-2xl p-6 w-[90vw] max-w-lg max-h-[85vh] overflow-y-auto"><p class="text-gray-400 text-sm text-center">⏳ 加载中...</p></div>';
+  modal.innerHTML = `<div class="glass rounded-2xl p-6 mx-auto" style="${_getUserDetailCardStyle()}"><p class="text-gray-400 text-sm text-center">⏳ 加载中...</p></div>`;
 
   try {
     const res = await fetch('/admin/api/users/' + userId + '/detail');
     const d = await res.json();
-    if (d.error) { modal.innerHTML = `<div class="glass rounded-2xl p-6"><p class="text-red-400">${escHtml(d.error)}</p></div>`; return; }
+    if (d.error) { modal.innerHTML = `<div class="glass rounded-2xl p-6 mx-auto" style="${_getUserDetailCardStyle()}"><p class="text-red-400">${escHtml(d.error)}</p><div class="pt-4 text-right"><button onclick="closeUserDetailModal()" class="text-xs px-3 py-1.5 rounded-lg bg-white/10 text-gray-300 hover:text-white">关闭</button></div></div>`; return; }
 
     const u = d.info;
     const safeUsername = escHtml(u.username || '');
@@ -197,8 +207,8 @@ async function showUserDetail(userId) {
       : '<p class="text-gray-600 text-xs">无记录</p>';
 
     modal.innerHTML = `
-      <div class="glass rounded-2xl p-5 w-[90vw] max-w-lg max-h-[85vh] overflow-y-auto space-y-4">
-        <div class="flex items-center justify-between">
+      <div class="glass rounded-2xl p-4 space-y-4 mx-auto" style="${_getUserDetailCardStyle()}">
+        <div class="sticky top-0 z-10 -mx-4 px-4 py-2 mb-1 bg-[#1a1520]/95 backdrop-blur-sm border-b border-white/10 flex items-center justify-between">
           <div>
             <h3 class="text-white font-semibold">${safeUsername}</h3>
             <div class="flex items-center gap-2 mt-1">
@@ -206,7 +216,7 @@ async function showUserDetail(userId) {
               ${badges.join(' ')}
             </div>
           </div>
-          <button onclick="document.getElementById('user-detail-modal').classList.add('hidden')" class="text-gray-500 hover:text-white text-lg">✕</button>
+          <button onclick="closeUserDetailModal()" class="text-gray-500 hover:text-white text-lg px-2 py-1" aria-label="关闭详情弹窗">✕</button>
         </div>
 
         <div class="grid grid-cols-2 gap-2 text-xs">
@@ -235,13 +245,14 @@ async function showUserDetail(userId) {
           <div class="glass rounded-xl p-3 max-h-40 overflow-y-auto">${timelineHtml}</div>
         </div>
 
-        <div class="flex gap-2 pt-2">
+        <div class="flex flex-wrap gap-2 pt-2">
           <button onclick="fetch('/admin/api/users/${safeUserId}/toggle-block',{method:'POST',headers:{'X-CSRF-Token':_csrf,'Accept':'application/json'}}).then(r=>r.json()).then(d=>{if(d.ok){showToast(d.message);showUserDetail(${safeUserId})}})" class="text-xs px-3 py-1.5 rounded-lg ${u.is_blocked ? 'bg-emerald-600/40 text-emerald-300' : 'bg-red-500/20 text-red-400'} hover:opacity-80 transition">${u.is_blocked ? '✅ 解封' : '🚫 封禁'}</button>
           <button onclick="fetch('/admin/api/users/${safeUserId}/reset-token',{method:'POST',headers:{'X-CSRF-Token':_csrf,'Accept':'application/json'}}).then(r=>r.json()).then(d=>{if(d.ok)showToast('订阅已重置')})" class="text-xs px-3 py-1.5 rounded-lg bg-amber-500/20 text-amber-400 hover:opacity-80 transition">🔄 重置订阅</button>
+          <button onclick="closeUserDetailModal()" class="text-xs px-3 py-1.5 rounded-lg bg-white/10 text-gray-300 hover:text-white transition ml-auto">关闭</button>
         </div>
       </div>
     `;
   } catch (e) {
-    modal.innerHTML = `<div class="glass rounded-2xl p-6"><p class="text-red-400 text-sm">加载失败: ${escHtml(e.message || '未知错误')}</p></div>`;
+    modal.innerHTML = `<div class="glass rounded-2xl p-6 mx-auto" style="${_getUserDetailCardStyle()}"><p class="text-red-400 text-sm">加载失败: ${escHtml(e.message || '未知错误')}</p><div class="pt-4 text-right"><button onclick="closeUserDetailModal()" class="text-xs px-3 py-1.5 rounded-lg bg-white/10 text-gray-300 hover:text-white">关闭</button></div></div>`;
   }
 }
