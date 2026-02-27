@@ -107,6 +107,7 @@ function initTables() {
       remark TEXT,
       last_rotated TEXT,
       last_check TEXT,
+      is_donation INTEGER DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now', 'localtime'))
     );
 
@@ -293,9 +294,6 @@ function initTables() {
     db.exec("ALTER TABLE users ADD COLUMN traffic_limit INTEGER DEFAULT 0");
   }
   if (!userCols.includes('is_donor')) {
-  }
-  if (!userCols.includes('last_token_reset')) {
-    db.exec("ALTER TABLE users ADD COLUMN last_token_reset TEXT DEFAULT '2000-01-01'");
     db.exec("ALTER TABLE users ADD COLUMN is_donor INTEGER DEFAULT 0");
   }
   if (!userCols.includes('last_token_reset')) {
@@ -435,17 +433,8 @@ function initTables() {
   if (!nodeCols2.includes('ip_version')) {
     try { db.exec("ALTER TABLE nodes ADD COLUMN ip_version INTEGER DEFAULT 4"); } catch(_){}
   }
-
-  // IPv6 SS 迁移
-  const nodeCols3 = db.prepare("PRAGMA table_info(nodes)").all().map(c => c.name);
-  if (!nodeCols3.includes('ss_method')) {
-    try { db.exec("ALTER TABLE nodes ADD COLUMN ss_method TEXT DEFAULT 'aes-256-gcm'"); } catch(_){}
-  }
-  if (!nodeCols3.includes('ss_password')) {
-    try { db.exec("ALTER TABLE nodes ADD COLUMN ss_password TEXT"); } catch(_){}
-  }
-  if (!nodeCols3.includes('ip_version')) {
-    try { db.exec("ALTER TABLE nodes ADD COLUMN ip_version INTEGER DEFAULT 4"); } catch(_){}
+  if (!nodeCols2.includes('is_donation')) {
+    try { db.exec("ALTER TABLE nodes ADD COLUMN is_donation INTEGER DEFAULT 0"); } catch(_){}
   }
 
   // Sprint 6 迁移：用户到期时间

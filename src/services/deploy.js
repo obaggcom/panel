@@ -427,7 +427,7 @@ async function deployNode(sshInfo, db) {
     // 生成多用户配置
     const userUuids = db.getNodeAllUserUuids(nodeId);
     const clients = userUuids.length > 0
-      ? userUuids.map(u => ({ id: u.uuid, level: 0, email: makeEmail(u.user_id, u.uuid, node.is_donation) }))
+      ? userUuids.map(u => ({ id: u.uuid, level: 0, email: makeEmail(u.user_id, u.uuid, false) }))
       : [{ id: uuid, level: 0, email: 'default@panel' }];
 
     let outbounds;
@@ -698,7 +698,7 @@ async function deploySsNode(sshInfo, db) {
     // 生成多用户 SS 配置（带 stats）
     const userUuids = db.getNodeAllUserUuids(nodeId);
     const clients = userUuids.length > 0
-      ? userUuids.map(u => ({ password: u.uuid, email: makeEmail(u.user_id, u.uuid, node.is_donation) }))
+      ? userUuids.map(u => ({ password: u.uuid, email: makeEmail(u.user_id, u.uuid, false) }))
       : [{ password: ssPassword, email: 'default@panel' }];
 
     const config = buildSsXrayConfig(port, clients, ssMethod);
@@ -843,12 +843,12 @@ async function deployDualNode(sshInfo, db) {
     // 构建双协议配置
     const vlessUuids = db.getNodeAllUserUuids(vlessNodeId);
     const vlessClients = vlessUuids.length > 0
-      ? vlessUuids.map(u => ({ id: u.uuid, level: 0, email: makeEmail(u.user_id, u.uuid, node.is_donation) }))
+      ? vlessUuids.map(u => ({ id: u.uuid, level: 0, email: makeEmail(u.user_id, u.uuid, false) }))
       : [{ id: uuid, level: 0, email: 'default@panel' }];
 
     const ssUuids = db.getNodeAllUserUuids(ssNodeId);
     const ssClients = ssUuids.length > 0
-      ? ssUuids.map(u => ({ password: u.uuid, email: makeEmail(u.user_id, u.uuid, node.is_donation) }))
+      ? ssUuids.map(u => ({ password: u.uuid, email: makeEmail(u.user_id, u.uuid, false) }))
       : [{ password: ssPassword, email: 'default@panel' }];
 
     let outbounds;

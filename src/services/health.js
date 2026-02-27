@@ -286,7 +286,7 @@ function updateFromAgentReport(nodeId, reportData) {
       db.addAuditLog(null, 'node_auto_remove_manual', detail, 'system');
       db.deleteNode(nodeId);
       // notify already imported at top
-      send(`🗑️ <b>手动节点已自动移除</b>\n节点: ${node.name}\n地址: ${node.host}:${node.port}\n原因: 连续 ${nextFailCount} 次检测失败 (${remark})\n时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`).catch(() => {});
+      notifySend(`🗑️ <b>手动节点已自动移除</b>\n节点: ${node.name}\n地址: ${node.host}:${node.port}\n原因: 连续 ${nextFailCount} 次检测失败 (${remark})\n时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`).catch(() => {});
       return;
     }
   }

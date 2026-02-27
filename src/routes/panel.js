@@ -153,7 +153,6 @@ router.get('/', requireAuth, (req, res) => {
     nodeAiTags,
     subUrl: `${req.protocol}://${req.get('host')}/sub/${user.sub_token}`,
     subUrl6: `${req.protocol}://${req.get('host')}/sub6/${user.sub_token}`,
-    subUrl6: `${req.protocol}://${req.get('host')}/sub6/${user.sub_token}`,
     nextUuidResetAt: nextUuidResetAtMs(),
     nextSubResetAt: nextTokenResetAtMs(user),
     announcement: db.getSetting('announcement') || '',
