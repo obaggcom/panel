@@ -7,13 +7,13 @@
 1. 检查面板 PM2 状态，挂了就重启
 2. 查数据库获取节点列表，逐个 TCP 探测
 3. 异常节点根据配置自动处理（换 IP / 修复 / 通知）
-4. 记录到 `memory/YYYY-MM-DD.md`
+4. 记录到 `memory/YYYY-MM-DD.md`（基于 OpenClaw workspace）
 
 ## 直接操作方式
 你可以直接：
 - `sqlite3` 查询/修改面板数据库
 - `pm2` 管理面板进程
-- `sshpass + ssh` 连接到节点执行命令
+- `ssh` 连接到节点执行命令（优先 SSH Key，避免明文密码）
 - `node -e "require('dotenv').config(); ..."` 调用面板服务代码
 - 读写面板目录下任何文件
 
@@ -33,7 +33,7 @@ require('dotenv').config();
 - 不泄露 SSH 密码、API Key、OAuth 密钥
 - 危险操作（删除实例、批量操作）前通知管理员
 - 遵守 ops_max_daily_swaps / ops_max_daily_creates 限额
-- `trash` > `rm`
+- 避免直接 `rm -rf`，优先可恢复删除策略（如移动到备份目录）
 
 ## 记忆
 - 每日记录到 `memory/YYYY-MM-DD.md`
