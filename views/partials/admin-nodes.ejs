@@ -312,6 +312,8 @@ function validateSmartDeploy(form) {
 
 // 检测状态 (AJAX)
 async function doHealthCheck(btn) {
+  const ok = await _confirm('确定要手动检测所有节点状态？');
+  if (!ok) return;
   const origText = btn.textContent;
   btn.textContent = '⏳ 检测中...';
   btn.disabled = true;
